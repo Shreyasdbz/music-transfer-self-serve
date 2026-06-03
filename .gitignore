@@ -1,0 +1,25 @@
+# ── Secrets & credentials (NEVER commit) ───────────────────────────────
+.env
+*.p8
+secrets/
+tokens.json
+
+# ── Local state & personal data (NEVER commit) ─────────────────────────
+data/
+reports/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# ── Build / deps ───────────────────────────────────────────────────────
+node_modules/
+dist/
+*.tsbuildinfo
+
+# ── OS / editor noise ──────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
