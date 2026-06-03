@@ -7,8 +7,9 @@ what to build**. This file governs **how you work**. Read `blueprint.md` fully b
 and re-read the relevant section before each phase.
 
 Your objective: take this project from an empty directory to a finished, committed, publish-ready
-CLI, **near-hands-off**. Stop only at the marked pause points (all credential/sign-in steps), do
-the work between them yourself, and keep going.
+**local web tool** (UI + embedded HTTP server + matching/transfer engine), **near-hands-off**.
+Stop only at the marked pause points (all credential/sign-in steps), do the work between them
+yourself, and keep going.
 
 ---
 
@@ -24,10 +25,13 @@ the work between them yourself, and keep going.
    acceptance-criteria result. This is how the human resumes if a session ends mid-build.
 3. **Phase discipline.** Build in the phase order in `blueprint.md` §13. Each phase must meet its
    acceptance criteria and be committed before the next begins.
-4. **Safety over completeness.** The tool is additive-union by default. Never implement a code path
-   that deletes user data without (a) an explicit `--apply --allow-removals`, (b) a passed
-   capability probe where the platform requires one, and (c) a confirmation pause. When unsure
-   whether something is destructive, treat it as destructive.
+4. **Safety over completeness.** The tool is **additive only** in v1. Operations add missing
+   tracks to the destination collection — they never remove tracks from either side, never
+   reorder, and never touch anything outside the chosen destination. Do not implement a
+   removal/unfavorite/reorder code path in v1; if the human ever amends scope to include
+   removals (see blueprint §15), the original gating (explicit opt-in flag + passed capability
+   probe + confirmation pause) must return with it. When unsure whether something is
+   destructive, treat it as destructive and skip it.
 5. **Verify, don't trust, the volatile bits.** The blueprint's §6 API notes are a strong prior, not
    gospel. The Apple delete capability, the favorites endpoint, and ISRC multi-result behavior all
    drift. Confirm each with a live probe or current official docs at build time. **Never invent an
@@ -83,10 +87,10 @@ at the very end (⏸E).
 ## Secrets discipline (non-negotiable — this repo goes public)
 
 - **Write `.gitignore` first**, in Phase 0, before creating anything else. It must cover
-  `.env`, `*.p8`, `secrets/`, `data/`, `reports/`, `tokens.json`, `*.sqlite*`, `node_modules/`,
-  `dist/`. Confirm with `git status` that none of these are trackable.
-- **Never** put a real secret in a tracked file. Templates (`.env.example`,
-  `sync.config.example.json`) contain blanks or obviously fake values only.
+  `.env`, `*.p8`, `secrets/`, `data/`, `tokens.json`, `*.sqlite*`, `node_modules/`, `dist/`.
+  Confirm with `git status` that none of these are trackable.
+- **Never** put a real secret in a tracked file. Templates (`.env.example`) contain blanks or
+  obviously fake values only.
 - **Never print, echo, log, or paste into chat** any of: the Apple private key, Team ID, Key ID,
   Spotify client id beyond what the human already pasted, access/refresh tokens, or the
   Music-User-Token. `util/log.ts` must redact `Authorization` and `Music-User-Token` headers.
@@ -107,10 +111,11 @@ at the very end (⏸E).
   Prettier). Anything beyond this list must be justified in `PROGRESS.md`.
 - **All network I/O goes through `util/http.ts`:** exponential backoff with jitter on 429/5xx,
   honor `Retry-After`, single worker / modest concurrency. No raw `fetch` calls scattered around.
-- **Errors are actionable.** On a 401, say which token expired and which `auth` command fixes it.
-  On a missing env var, name the var and point to `.env.example`.
-- **Idempotency is a feature, not a hope.** Check the ledger before writing. Re-running a sync with
-  no upstream changes must perform zero writes — test this in Phase 6.
+- **Errors are actionable.** On a 401, say which token expired and which UI reconnect button
+  (or `doctor` check) fixes it. On a missing env var, name the var and point to `.env.example`.
+- **Idempotency is a feature, not a hope.** Check the destination set (and the ledger) before
+  writing. Re-running the same Operation with no upstream changes must perform zero writes —
+  test this in Phase 6.
 - **Determinism.** Disambiguation and scoring must produce the same choice on every run for the
   same inputs. No randomness in selection.
 
@@ -137,7 +142,7 @@ at the very end (⏸E).
 - `git init` in Phase 0. Conventional-commit messages (`feat:`, `fix:`, `chore:`, `docs:`).
 - One commit at the end of each phase, after acceptance criteria pass, referencing the phase
   number. Run the secrets audit before staging.
-- **Never** commit `data/`, `reports/`, `secrets/`, `.env`, or any token.
+- **Never** commit `data/`, `secrets/`, `.env`, or any token.
 - Do **not** create or push to a GitHub remote autonomously. That's pause point ⏸E — ask first.
 
 ---

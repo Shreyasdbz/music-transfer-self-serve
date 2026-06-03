@@ -6,7 +6,6 @@ tokens.json
 
 # ── Local state & personal data (NEVER commit) ─────────────────────────
 data/
-reports/
 *.sqlite
 *.sqlite-journal
 *.sqlite-wal

@@ -1,11 +1,11 @@
 <!-- @format -->
 
-# Blueprint — `spotify-to-apple-music`
+# Blueprint — `music-transfer-self-serve`
 
-A personal, self-hosted CLI tool for **bidirectional playlist sync** between Spotify and
-Apple Music, with intelligent recording-level matching (ISRC-first) so that the _correct
-version_ of each track is synced — not a remix, not the clean edit when an explicit master
-exists, not a re-release.
+A personal, self-hosted **local web tool** for running one-time **transfer operations** between
+Spotify and Apple Music, with intelligent recording-level matching (ISRC-first) so that the
+_correct version_ of each track is transferred — not a remix, not the clean edit when an
+explicit master exists, not a re-release.
 
 This document is the **source of truth** for an autonomous coding agent (Claude Code). It is
 written to be executed near-hands-off. The only times the agent should stop and hand control
@@ -61,26 +61,55 @@ matches) and recover or degrade gracefully rather than corrupt state or fail sil
 
 ## 1. North star & scope
 
-**Goal:** Keep chosen Spotify playlists and Apple Music playlists in sync, in both directions,
-on demand (run a command), safely (never destroys data by surprise), and idempotently (re-running
-changes nothing if nothing changed).
+**Goal:** Provide a small, self-hosted **web UI** for running one-time **transfer Operations**
+between Spotify and Apple Music — safely (never destroys data), additively (only adds missing
+tracks to the destination), idempotently (re-running an unchanged operation writes nothing), and
+intelligently (recording-level matching so the _correct version_ of each track lands on the
+destination).
+
+**The Operation is the unit of work.** Each Operation is parameterized by:
+
+- `source` — `spotify` | `apple`
+- `destination` — `spotify` | `apple` (must differ from `source`)
+- `sourceTarget` — either a playlist on the source side (id / URL / name), **or** the source's
+  "Liked Songs" (Spotify) / "Favorite Songs" (Apple) collection
+- `destinationTarget` — same shape on the destination side. The UI disables the free-text
+  playlist input whenever "Liked"/"Favorites" is selected on that side.
+
+When the human presses **Run**, the tool resolves the source set, matches each track on the
+destination side, writes the missing items, and streams live status (per-track progress, matches,
+skips, unmatched, errors) back into the UI. A durable local ledger records every Operation for
+audit and caches resolved matches so re-runs are fast and idempotent.
 
 **In scope**
 
-- Sync arbitrary Spotify playlist ⇆ Apple Music playlist pairs (configured by the user).
-- Sync Spotify **Liked Songs** ⇆ Apple Music **Favorite Songs** as a special pair.
+- A local web UI (HTML/CSS/JS, no framework) served by a small embedded Node HTTP server.
+- A **Permissions preflight** that exercises every credential, scope, and read capability the
+  tool relies on (env, both tokens, Spotify scopes, storefront, sample reads on each side, ISRC
+  lookup) and **gates Catalog refresh and Operation runs** behind a recent passing result. The
+  same orchestrator backs the CLI `doctor` command.
+- One-time additive transfer Operations between any combination of `{spotify, apple}` source and
+  destination, with each target being either a playlist (id/URL/name) or Liked/Favorites.
+- An on-demand **Catalog** cache: after preflight passes, the human clicks "Update Catalog" and
+  the tool fetches and caches the user's playlists on each connected platform, so the Operation
+  form can offer a dropdown picker instead of asking for ids.
 - Intelligent matching: same recording on both sides via ISRC, with a scored search fallback.
-- Dry-run planning with human-readable reports before any write.
-- A durable local ledger (SQLite) that makes every run resumable, idempotent, and auditable.
+- Live operation status in the UI; a durable local ledger that makes operations resumable and
+  re-runs idempotent.
 - Publishable to a public GitHub repo with **zero** secrets or personal data tracked.
 
-**Explicitly out of scope** (do not build): multi-user support, a hosted service, a GUI/web app,
-distribution/packaging for others, real-time/continuous daemon syncing (this is run-on-demand),
-and any account-creation or payment flows.
+**Explicitly out of scope** (do not build): multi-user support, a hosted/remote service,
+distribution or packaging for others, continuous or scheduled syncing (operations are run
+on-demand from the UI), bidirectional reconciliation, removal propagation, and any
+account-creation or payment flows. The original bidirectional-sync-with-baseline design is
+deliberately deferred — see Amendment log §15 (2026-06-03). If it returns, it will re-introduce
+the §6 capability gates and confirmation pauses.
 
-**Non-negotiable safety posture:** additive-union by default. The tool _adds_ missing tracks to
-each side. It does **not** delete anything unless the human explicitly opts in per-run, and even
-then only where the platform API actually supports it (see §6).
+**Non-negotiable safety posture:** additive only. An Operation _adds_ missing tracks to the
+chosen destination collection. It never removes tracks from either side, never reorders, and
+never touches anything outside the chosen `destinationTarget`. When the destination is a
+playlist named in free-text that does not yet exist on the destination side, the tool may
+create it (and only it) — never anything else.
 
 ---
 
@@ -105,7 +134,7 @@ justified in `PROGRESS.md`.
 ## 3. Repository layout (target)
 
 ```
-spotify-to-apple-music/
+music-transfer-self-serve/
 ├─ blueprint.md                 # this file (tracked)
 ├─ CLAUDE.md                    # agent operating manual (tracked)
 ├─ README.md                    # human setup + usage (tracked)
@@ -113,34 +142,43 @@ spotify-to-apple-music/
 ├─ package.json / tsconfig.json # (tracked)
 ├─ .gitignore                   # (tracked)
 ├─ .env.example                 # template, no real values (tracked)
-├─ sync.config.example.json     # template pair definitions (tracked)
 ├─ src/
-│  ├─ cli.ts                    # command router / entrypoint
-│  ├─ config.ts                 # load + validate sync.config.json and env
+│  ├─ server.ts                 # entrypoint: starts the HTTP server, opens the UI
+│  ├─ cli.ts                    # minimal CLI: `doctor` only (health/diagnostics)
+│  ├─ config.ts                 # load + validate env
 │  ├─ auth/
 │  │  ├─ spotify.ts             # Authorization Code + PKCE, token refresh
 │  │  └─ apple.ts               # dev-token JWT + Music-User-Token capture
 │  ├─ clients/
 │  │  ├─ spotify.ts             # read + write wrapper
 │  │  └─ apple.ts               # read + write wrapper + capability probing
+│  ├─ catalog/
+│  │  └─ catalog.ts             # fetch + cache the user's playlists per platform
+│  ├─ preflight/
+│  │  ├─ checks.ts              # individual check fns (env, tokens, sample reads, probes)
+│  │  └─ runner.ts              # orchestrates all checks, emits SSE events; shared by UI + CLI
 │  ├─ match/
 │  │  ├─ identity.ts            # ISRC normalization + fuzzy fallback key
 │  │  ├─ scoring.ts             # candidate scoring for the search fallback
 │  │  └─ matcher.ts             # tiered matching, both directions
-│  ├─ sync/
-│  │  ├─ engine.ts              # three-way merge orchestration
-│  │  ├─ planner.ts             # diff → action plan
-│  │  └─ applier.ts             # execute plan (dry-run aware)
+│  ├─ operation/
+│  │  ├─ types.ts               # Operation, Source, Destination, Target, Event types
+│  │  └─ runner.ts              # orchestrates a single Operation, emits status events
 │  ├─ ledger/
-│  │  └─ db.ts                  # schema + queries
-│  ├─ report/
-│  │  └─ reports.ts             # unmatched / conflicts / review CSV+MD
+│  │  └─ db.ts                  # schema + queries + forward migrations
+│  ├─ http/
+│  │  ├─ server.ts              # routes: /api/auth/*, /api/catalog, /api/operations, SSE
+│  │  └─ static.ts              # serves /web/
 │  └─ util/
 │     ├─ http.ts                # fetch with backoff, 429/Retry-After handling
 │     └─ log.ts                 # structured logging that NEVER prints secrets
+├─ web/                         # tracked: static assets served by src/http/server.ts
+│  ├─ index.html                # auth status + catalog + operation form + run panel
+│  ├─ app.css
+│  ├─ app.js                    # vanilla JS, no framework / no bundler
+│  └─ musickit.html             # the MUT-capture page loaded during Apple auth
 ├─ data/                        # GITIGNORED: sync.sqlite, tokens.json
-├─ secrets/                     # GITIGNORED: AuthKey_*.p8
-└─ reports/                     # GITIGNORED: contains personal playlist data
+└─ secrets/                     # GITIGNORED: AuthKey_*.p8
 ```
 
 ---
@@ -264,9 +302,13 @@ a live capability probe rather than trusting this document blindly.
    editable playlists. Some clients report removal working only for playlists created through
    MusicKit's native `createPlaylist`, and not for playlists created via the REST API; others
    with `canEdit=true` find no working REST delete. **Therefore: Apple-side removals are
-   report-only by default.** The agent must implement a runtime probe (create a throwaway test
-   playlist, add a track, attempt removal, observe the result, then clean up) and gate any
-   removal feature behind that probe's success.
+   report-only by default.** The original design called for a runtime probe (create a throwaway
+   test playlist, add a track, attempt removal, observe, then clean up) to gate any removal
+   feature behind. **v1 deletes nothing**, so the probe is **deferred** — it is not implemented
+   and not run as part of the §11 preflight (see Amendment log 2026-06-03). If removal
+   propagation ever returns via amendment, the probe returns with it: implement it then, run it
+   in preflight and at relevant capability boundaries, and gate any removal code path on its
+   pass.
 3. **Apple Favorites are one-way from third parties.** A song can be favorited via the API, but
    it **cannot be un-favorited** by a third-party app — only inside the Apple Music app itself.
    So Liked⇆Favorites removals on the Apple side are always report-only. Also: the exact REST
@@ -340,47 +382,55 @@ so future runs skip re-matching.
 
 ---
 
-## 8. Sync engine — three-way merge
+## 8. Operation engine — additive one-way transfer
 
-True bidirectional sync requires distinguishing "added on side A" from "deleted on side B". That
-demands a stored **baseline**: the reconciled state at the end of the last successful sync. This
-is the same model every file-sync system uses, and it is the only correct way to avoid
-resurrecting deleted tracks or silently dropping new ones.
+An Operation is a single forward pass: read the source set, match each track on the destination
+side, and add the missing ones to the destination collection. There is no baseline, no
+reconciliation, no removal — an Operation only ever _grows_ the destination set.
 
-**Identity key** for set math: ISRC when present; otherwise a normalized
+**Identity key** for set membership: ISRC when present; otherwise a normalized
 `title|artist|durationBucket` fuzzy key flagged low-confidence.
 
-**Per pair, per run:**
+**Per Operation:**
 
-1. Read current Spotify set `S` and current Apple set `A`.
-2. Load baseline `B` (empty on first sync → first sync is a pure union, additive).
-3. Compute, against `B`:
-   - `addedOnSpotify   = S \ B`
-   - `removedOnSpotify = B \ S`
-   - `addedOnApple     = A \ B`
-   - `removedOnApple   = B \ A`
-4. Build the plan:
-   - **Additions (always, both directions):** items in `addedOnSpotify` missing from `A` → add to
-     Apple; items in `addedOnApple` missing from `S` → add to Spotify. Dedupe by identity key;
-     skip anything already present on the target.
-   - **Removals (opt-in only, `--allow-removals`):**
-     - `removedOnSpotify` → remove from Apple: **report-only** unless the Apple delete probe
-       passed; if it passed and the flag is set, apply.
-     - `removedOnApple` → remove from Spotify: apply only with the flag set, after a confirmation
-       pause; otherwise report-only.
-   - **Conflicts:** an item added on one side _and_ removed on the other since the baseline →
-     never auto-resolve; write to the conflicts report and leave both sides untouched.
-5. Apply the plan (or, in dry-run, only render reports).
-6. Write the new baseline = the reconciled present state, with resolved IDs for both platforms.
+1. **Resolve `sourceTarget`** to a concrete collection on the source platform — a playlist (by
+   id, or by URL parsed to id, or by name resolved against the catalog cache) or the source's
+   Liked/Favorites. Read its full track set `S`, capturing ISRC + metadata for each item.
+2. **Resolve `destinationTarget`** on the destination platform. If it is "Liked"/"Favorites", or
+   an existing playlist selected from the catalog dropdown, use it. If it is a free-text
+   playlist name that does not exist yet on the destination side, **create it** as part of this
+   step (and only it). Read the destination's current track set `D` for idempotency.
+3. **For each `s ∈ S`** (in source order):
+   - If `identity_key(s) ∈ D` already, emit `skipped (already present)` and continue.
+   - Otherwise resolve `s` against the destination platform via the matcher (§7) — first the
+     ledger's cached mapping, then live ISRC lookup, then scored search. On match, stage a
+     write. On unmatched, emit an `unmatched` event with the source metadata and best rejected
+     candidate, and continue.
+4. **Apply the staged writes** in source order, in sequential batches (Apple strictly
+   sequential, as §6.1 requires; Spotify can use slightly larger batches but still modest).
+   Emit a status event per successful write and per failure. A single failure is recorded as a
+   `failed` action and does **not** abort the Operation — the next item proceeds.
+5. **Persist** the Operation record + full event log + summary counts to the ledger.
 
-First-run behavior (no baseline): pure additive union — both sides end up containing the union of
-both, nothing is ever removed.
+**Idempotency.** Re-running the same Operation (same `source`, `destination`, `sourceTarget`,
+`destinationTarget`) must result in zero new writes when the source has not changed, because
+every item is already in `D`. Verified explicitly in Phase 6 acceptance.
+
+**Resumability.** A crash mid-Operation is recoverable: the destination read in step 2 will
+include everything already written, so the next run of the same Operation naturally skips those
+items. The ledger event log lets the UI replay status from where it left off.
+
+**Concurrency.** Only one Operation may run at a time. The Run button is disabled while an
+Operation is active; the server returns `409 Conflict` if a second Operation is POSTed.
 
 ---
 
-## 9. Ledger schema (SQLite, `data/sync.sqlite`)
+## 9. Ledger schema (SQLite, `data/ledger.sqlite`)
 
 ```sql
+-- forward-only schema version; db.ts migrates on startup (§12.5)
+CREATE TABLE schema_version ( version INTEGER PRIMARY KEY );
+
 -- canonical cross-service track identity + cached resolution
 CREATE TABLE tracks (
   identity_key      TEXT PRIMARY KEY,   -- isrc OR fuzzy key
@@ -396,101 +446,234 @@ CREATE TABLE tracks (
   updated_at        TEXT
 );
 
--- a configured playlist pairing
-CREATE TABLE sync_pairs (
-  id                 TEXT PRIMARY KEY,  -- from sync.config.json
-  name               TEXT,
-  spotify_playlist   TEXT,              -- playlist id OR 'liked'
-  apple_playlist     TEXT,              -- library playlist id OR 'favorites'
-  direction          TEXT,              -- 'both' | 's2a' | 'a2s'
-  created_at         TEXT
+-- cached listing of the user's playlists per platform, populated by "Update Catalog"
+CREATE TABLE catalog (
+  platform     TEXT,             -- 'spotify' | 'apple'
+  kind         TEXT,              -- 'playlist' | 'liked' | 'favorites'
+  external_id  TEXT,              -- platform id (empty for liked/favorites singletons)
+  name         TEXT,
+  owner        TEXT,              -- spotify owner / apple curator (nullable)
+  track_count  INTEGER,
+  url          TEXT,              -- deep link (nullable)
+  fetched_at   TEXT,
+  PRIMARY KEY (platform, kind, external_id)
 );
 
--- reconciled snapshot after the last successful sync (the merge baseline)
-CREATE TABLE baseline (
-  pair_id       TEXT,
-  identity_key  TEXT,
-  spotify_id    TEXT,
-  apple_id      TEXT,
-  last_synced   TEXT,
-  PRIMARY KEY (pair_id, identity_key)
+-- one row per Permissions preflight run (UI button or CLI `doctor`)
+CREATE TABLE preflight_runs (
+  id          TEXT PRIMARY KEY,   -- ulid/uuid
+  started_at  TEXT,
+  finished_at TEXT,                -- nullable while running
+  status      TEXT,                -- 'running' | 'passed' | 'failed' | 'partial' | 'invalidated'
+  trigger     TEXT,                -- 'manual' | 'cli' | 'auto-401' | 'auto-403-scope'
+  surface     TEXT                  -- 'ui' | 'cli'
 );
 
-CREATE TABLE sync_runs (
-  id         TEXT PRIMARY KEY,
-  pair_id    TEXT,
-  mode       TEXT,            -- 'dry' | 'apply'
-  started_at TEXT,
-  finished_at TEXT,
-  summary    TEXT             -- JSON: counts of add/remove/conflict/unmatched
+-- per-check result row, ordered by seq within a preflight run
+CREATE TABLE preflight_checks (
+  run_id      TEXT,
+  seq         INTEGER,
+  name        TEXT,                 -- 'env' | 'spotify_token' | 'spotify_scopes' | 'spotify_me' |
+                                    -- 'spotify_search' | 'apple_dev_token' | 'apple_mut' |
+                                    -- 'apple_storefront' | 'apple_library_read' |
+                                    -- 'apple_isrc_lookup' | 'apple_delete_probe'
+  status      TEXT,                 -- 'pass' | 'warn' | 'fail' | 'skip'
+  detail      TEXT,                 -- JSON; MUST be redaction-safe (no tokens, no keys)
+  duration_ms INTEGER,
+  PRIMARY KEY (run_id, seq)
 );
 
-CREATE TABLE actions (
-  run_id       TEXT,
-  pair_id      TEXT,
-  identity_key TEXT,
-  action       TEXT,          -- add_to_apple | add_to_spotify | remove_* | flag_conflict | unmatched
-  status       TEXT,          -- planned | applied | skipped | reported | failed
-  detail       TEXT
+-- one row per Operation the human has run (or started running)
+CREATE TABLE operations (
+  id                 TEXT PRIMARY KEY,  -- ulid/uuid
+  created_at         TEXT,
+  finished_at        TEXT,              -- nullable while running
+  source             TEXT,              -- 'spotify' | 'apple'
+  destination        TEXT,              -- 'spotify' | 'apple'
+  source_target      TEXT,              -- JSON { kind: 'playlist'|'liked'|'favorites', id?, name?, url? }
+  destination_target TEXT,              -- JSON same shape
+  status             TEXT,              -- 'queued' | 'running' | 'succeeded' | 'partial' | 'failed'
+  summary            TEXT                -- JSON counts: read, matched, skipped, written, unmatched, failed
+);
+
+-- append-only, ordered event log per Operation; backs SSE live + replay
+CREATE TABLE operation_events (
+  operation_id TEXT,
+  seq          INTEGER,
+  ts           TEXT,
+  type         TEXT,               -- 'stage' | 'match' | 'skip' | 'write' | 'unmatched' | 'error' | 'done'
+  payload      TEXT,                -- JSON
+  PRIMARY KEY (operation_id, seq)
 );
 ```
 
-The ledger is the source of truth for resumability and idempotency — not the live services.
-Before creating any Apple library playlist, check the ledger and the live library for an existing
-one with the same mapped name to avoid duplicates.
+The ledger is the source of truth for resumability, idempotency, and the SSE event-log replay —
+not the live services. Before creating a new playlist on the destination side (free-text name
+case), check the catalog cache and the live library for an existing one with the same name to
+avoid duplicates; if found, prefer the existing one and surface a confirmation in the UI.
 
 ---
 
-## 10. Configuration (`sync.config.json`, git-tracked; secrets stay in `.env`)
+## 10. Configuration
 
-```json
-{
-  "pairs": [
-    {
-      "id": "workout",
-      "name": "Workout",
-      "spotify_playlist": "spotify:playlist:XXXXXXXXXXXXXXXXXXXXXX",
-      "apple_playlist": "AUTO_CREATE",
-      "direction": "both"
-    },
-    {
-      "id": "liked",
-      "name": "Liked ⇆ Favorites",
-      "spotify_playlist": "liked",
-      "apple_playlist": "favorites",
-      "direction": "both"
-    }
-  ],
-  "match": { "search_accept_threshold": 70, "duration_tolerance_ms": 3000 }
-}
-```
+There is no `sync.config.json`. Operations are constructed ad-hoc in the web UI; what to transfer
+is _the_ thing the human is choosing each time. Persistent configuration is limited to:
 
-`apple_playlist: "AUTO_CREATE"` tells the tool to create the Apple library playlist on first sync
-and record its id in the ledger. Ship a `sync.config.example.json` with fake ids.
+- **`.env`** — credentials only (see §4 for the exact key list). Git-ignored.
+- **Built-in defaults** — the matching thresholds (`search_accept_threshold: 70`,
+  `duration_tolerance_ms: 3000`, §7) live in `match/scoring.ts` as constants. If the human ever
+  needs to tune them, they get a small "Advanced" disclosure in the UI that writes overrides to
+  a `settings` table in the ledger; do not build this until asked.
+
+The original `sync.config.example.json` template is removed by this amendment — see Amendment
+log §15 (2026-06-03).
 
 ---
 
-## 11. CLI surface
+## 11. Surface — web UI + minimal CLI
+
+### 11.1 Web UI (the primary surface)
+
+Served at `http://127.0.0.1:8888/` by `src/http/server.ts`. Vanilla HTML/CSS/JS in `web/`, no
+framework, no bundler.
+
+One page, five panels (rendered top to bottom, in order):
+
+1. **Auth status panel.** Shows whether Spotify and Apple Music are connected, with "Connect" /
+   "Reconnect" buttons that drive the OAuth / MusicKit flows. The local server hosts the
+   callbacks, so token capture is automatic and the human stays in the UI throughout.
+2. **Permissions panel.** A single **Check permissions** button runs a comprehensive preflight
+   that exercises every credential, scope, and read capability the tool depends on, before the
+   human is allowed to refresh the catalog or run an Operation. Each check streams its result
+   via SSE (pass / fail with a redacted detail line); the panel renders a live checklist
+   grouped under three headings.
+
+   **Ten checks, three groups. Ordering & skip semantics:** `env` runs first; if it fails, all
+   downstream checks are recorded as `skip` with `detail="prerequisite env failed"`. After
+   `env` passes, the Spotify group and the Apple group run **in parallel** (they are independent
+   — one platform being broken should not block diagnostics on the other). Within each platform
+   group, the checks run sequentially; if the first auth check (`spotify_token` or
+   `apple_dev_token`) fails, the rest of that group is recorded as `skip`.
+
+   **Group 1 — Environment**
+   1. **`env`** — required `.env` keys present and non-empty: `SPOTIFY_CLIENT_ID`,
+      `SPOTIFY_REDIRECT_URI`, `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY_PATH`. The
+      `APPLE_PRIVATE_KEY_PATH` file must exist and be readable.
+
+   **Group 2 — Spotify**
+   2. **`spotify_token`** — Spotify access token valid; if expired, attempt refresh via the
+      stored refresh token and report which path was used (`fresh` | `refreshed`).
+   3. **`spotify_scopes`** — the granted scope list **persisted in `data/tokens.json`** (captured
+      from the OAuth `scope` response field at initial token exchange and refreshed on every
+      token refresh) covers every required scope: `playlist-read-private`,
+      `playlist-read-collaborative`, `user-library-read`, `playlist-modify-private`,
+      `playlist-modify-public`, `user-library-modify`. Failure detail lists the missing scope
+      names and the remediation ("re-Connect Spotify to re-consent"). Note for future agents:
+      Spotify has no public token-introspection endpoint for PKCE clients — never invent one;
+      the scope list lives in the local token cache.
+   4. **`spotify_me`** — `GET /v1/me` returns a profile (proves auth header is accepted).
+   5. **`spotify_search`** — a low-cardinality `GET /v1/search?type=track&q=...&limit=1`
+      returns ≥ 1 result (proves catalog read works — what matching depends on).
+
+   **Group 3 — Apple**
+   6. **`apple_dev_token`** — the JWT signs successfully from the `.p8` (regenerate if within
+      7 days of expiry per §5.2); decode locally to confirm `iss`, `kid`, and `exp` are sane.
+   7. **`apple_mut`** — Music-User-Token present and accepted by a trivial authorized call.
+   8. **`apple_storefront`** — `GET /v1/me/storefront` resolves; record the storefront id (this
+      is also where the storefront cache for the rest of the session warms).
+   9. **`apple_library_read`** — `GET /v1/me/library/playlists?limit=1` succeeds (proves MUT +
+      library scope on the dev token).
+   10. **`apple_isrc_lookup`** — a known-good ISRC lookup in the resolved storefront returns at
+       least one validated (non-404) candidate (proves catalog read + matching plumbing).
+
+   The §6.2 Apple delete-capability probe is **not** part of preflight in v1 — see §6.2 and the
+   Amendment log (2026-06-03 #2). It returns when removals return.
+
+   **Gating policy** (enforced both client-side as button disable, and server-side as
+   `412 Precondition Failed` on `POST /api/catalog/refresh` and `POST /api/operations`):
+
+   The gate is **open** iff the latest `preflight_runs` row satisfies **all** of:
+   - `status = 'passed'` (every non-skip check passed; no failures), AND
+   - `finished_at` is within the last **24 hours** (soft expiry — overnight drift like a
+     revoked Spotify authorization or an expired MUT gets caught at the door rather than
+     mid-Operation), AND
+   - no `invalidated` row has been inserted since (see auto-invalidation below).
+
+   Otherwise the gate is **closed**: Catalog refresh and Operation Run are disabled with
+   contextual hover text ("Re-check permissions required: last pass was 38h ago" or "Re-check
+   required: Spotify auth failed since last pass"), and the corresponding POST endpoints return
+   `412` with a body explaining the reason. The UI panel always offers a **Re-check** button.
+
+   **Auto-invalidation** is **refresh-aware**: `util/http.ts` catches 401 by attempting one
+   token refresh (Spotify) or one dev-token re-sign (Apple) and retrying the request. Only if
+   the **retry** still returns 401 — or returns a 403 whose body indicates a scope/permission
+   problem (not a rate-limit) — does the server insert a new `preflight_runs` row with
+   `status='invalidated'` and `trigger='auto-401'` (or `'auto-403-scope'`). Rate-limit 403s,
+   transient 401s recovered by refresh, and any 5xx do not invalidate the gate.
+
+3. **Catalog panel.** An **Update Catalog** button fetches the user's playlists from each
+   connected platform and stores them in the `catalog` table; live progress streams via SSE
+   from `/api/catalog/events`. After a refresh, the Operation form's dropdowns repopulate. The
+   panel also shows when each platform's catalog was last fetched. This panel is disabled when
+   the preflight gate has not passed.
+4. **Operation form.** Fields:
+   - `Source` — radio (Spotify / Apple)
+   - `Destination` — radio (Spotify / Apple), auto-filtered so it cannot equal `Source`
+   - `Source Target` — a dropdown of the source's cached playlists (with the platform's
+     Liked/Favorites pinned at the top), **plus** a free-text input for a playlist id / URL /
+     name. The dropdown and the input are mutually exclusive; selecting Liked/Favorites
+     disables the input.
+   - `Destination Target` — same shape, on the destination side. The free-text input here
+     accepts an existing playlist (id / URL / name) **or** a new name to be created. Selecting
+     Favorites/Liked disables the input.
+   - **Run** — submits the Operation. Disabled when **preflight has not passed**, when source ≡
+     destination, when either side is unauthorized, when both target fields on a side are empty,
+     or when an Operation is already running.
+5. **Run panel.** When an Operation is running or has just finished, this panel shows: current
+   stage (resolving source → reading destination → matching → writing → done), a progress bar
+   (written / matched out of total), a scrollable event log (one line per match, skip, write,
+   unmatched, failure), and a final summary card with counts and a copyable JSON summary. The
+   panel also has a "Past operations" disclosure that lists prior operations from the ledger.
+
+### 11.2 HTTP API (consumed by the UI; documented for diagnostics)
 
 ```
-init                         # scaffold config from example, run db migrations
-auth spotify                 # PKCE consent flow            (⏸ B)
-auth apple                   # dev token + MUT capture      (⏸ D)
-auth status                  # token validity / expiry, no secret values printed
-doctor                       # env present? tokens valid? storefront? Apple delete-probe?
-plan <pairId|all>            # dry-run: compute + write reports, NO writes
-sync <pairId|all> [flags]    # execute
-report                       # print last run summary from the ledger
+GET    /api/health                  liveness
+GET    /api/auth/status             { spotify: {connected, expiresAt?}, apple: {connected, expiresAt?} }
+POST   /api/auth/spotify/start      returns { authorizeUrl } the UI opens in a popup
+GET    /auth/spotify/callback       Spotify redirects here; server stores tokens; closes popup
+POST   /api/auth/apple/start        returns { developerToken } for MusicKit JS in the popup
+POST   /api/auth/apple/callback     popup POSTs the MUT here; server stores it; closes popup
+GET    /api/preflight/latest        latest preflight_runs row + its checks; null if none
+POST   /api/preflight/run           starts a new preflight; returns { id }; 409 if one is running
+GET    /api/preflight/:id           a specific preflight_runs row + its checks
+GET    /api/preflight/:id/events    SSE: per-check live events (and replay from the ledger)
+GET    /api/catalog                 current cached catalog, both platforms
+POST   /api/catalog/refresh         kicks off a refresh of both connected platforms
+                                    returns 412 if preflight gate has not passed
+GET    /api/catalog/events          SSE: refresh progress
+POST   /api/operations              body: { source, destination, sourceTarget, destinationTarget }
+                                    returns { id }; 409 if another Operation is running;
+                                    412 if preflight gate has not passed
+GET    /api/operations              recent operations list (from ledger)
+GET    /api/operations/:id          operation record + summary
+GET    /api/operations/:id/events   SSE: live events (and replay from the ledger on reconnect)
 ```
 
-`sync` flags:
+### 11.3 Minimal CLI
 
-- `--apply` — actually write (default is dry-run even for `sync`).
-- `--direction both|s2a|a2s` — override the pair's configured direction for this run.
-- `--allow-removals` — enable opt-in removal propagation (still capability-gated + confirmed).
+```
+npx tsx src/server.ts        # start the UI server (default; opens the browser)
+npx tsx src/cli.ts doctor    # env present? tokens valid? storefront? Apple delete-probe?
+```
 
-Removals require BOTH `--apply` and `--allow-removals`, and trigger a confirmation pause showing
-exactly what will be removed before anything is deleted.
+The auth flows live behind the UI's auth panel — there are no separate `auth spotify` /
+`auth apple` CLI commands in v1. The CLI exists only for headless health-checking and for the
+agent itself to verify environment state at the credential pause points. `doctor` is just a
+thin CLI surface over `preflight/runner.ts` — it runs exactly the same checks the UI's
+**Check permissions** button runs, writes the same `preflight_runs` / `preflight_checks` rows
+(with `surface='cli'`), and prints a pretty checklist. A `doctor` pass counts for the UI's
+gating policy, and vice versa.
 
 ---
 
@@ -538,44 +721,90 @@ The tool must keep itself working as the world drifts, without a human babysitti
 Each phase ends with a commit (see `CLAUDE.md` git workflow) and a `PROGRESS.md` entry.
 
 - **Phase 0 — Scaffold.** Repo, `git init`, `.gitignore` (✅ before any other file), `package.json`,
-  `tsconfig`, ESLint/Prettier, `.env.example`, `sync.config.example.json`, README skeleton,
-  `PROGRESS.md`. **AC:** `npm run build` passes; `git status` shows no secret/data/report paths
-  trackable.
-- **Phase 1 — Config + ledger.** `config.ts`, `ledger/db.ts`, `init` command. **AC:** `init`
-  creates `data/sync.sqlite` with the schema and a config from the example.
-- **Phase 2 — Spotify auth + read.** PKCE flow, refresh, read client. **AC:** after ⏸A/⏸B, can
-  list playlists, read a playlist's tracks with ISRCs, and read Liked Songs.
-- **Phase 3 — Apple auth + read.** Dev-token signing, MUT capture page, read client. **AC:** after
-  ⏸C/⏸D, `doctor` resolves storefront, reads library playlists, searches the catalog, and does an
-  ISRC lookup. The Apple **delete-capability probe** runs here and records its result.
-- **Phase 4 — Matching.** `identity`, `scoring`, `matcher` for both directions. **AC:** a known
-  explicit Spotify track resolves to the explicit Apple master via ISRC (not the clean version);
-  a no-ISRC track resolves via scored search or lands in unmatched; symmetric Apple→Spotify works.
-- **Phase 5 — Plan / dry-run.** `engine`, `planner`, `reports`, `plan` command. **AC:** `plan` on a
-  pair writes a correct add/remove/conflict/unmatched plan and reports, performs **zero** writes.
-- **Phase 6 — Apply.** `applier`, idempotent additive sync, removal gating + confirmation. **AC:**
-  `sync --apply` converges both sides on additions; a second run is a no-op; removals are
-  report-only by default and only apply with `--allow-removals` + passed probe + confirmation.
-- **Phase 7 — UX polish.** `auth status`, `report`, `doctor` completeness, logging redaction,
-  helpful errors at every pause point. **AC:** all CLI commands documented and working.
-- **Phase 8 — Publish prep.** Final secrets audit, README setup walkthrough, license. **AC:** clean
-  repo, no secrets/data tracked. **⏸ PAUSE POINT E (optional):** ask the human before creating or
-  pushing to a GitHub remote; do not create the remote autonomously.
+  `tsconfig`, ESLint/Prettier, `.env.example`, an empty `web/index.html` placeholder, README
+  skeleton, `PROGRESS.md`. **AC:** `npm run build` passes; `git status` shows no secret/data
+  paths trackable; the existing `sync.config.example.json` has been removed (per §10).
+- **Phase 1 — Ledger + HTTP server skeleton.** `config.ts`, `ledger/db.ts` with the §9 schema and
+  forward-migration runner, `http/server.ts` serving `/api/health` and static `/web/` assets,
+  `src/server.ts` entrypoint. **AC:** `npx tsx src/server.ts` starts the server, the UI loads in
+  a browser and shows the health-check result, `data/ledger.sqlite` is created with all tables
+  and a `schema_version` row.
+- **Phase 2 — Spotify auth + read.** PKCE flow wired through the UI's auth panel; loopback
+  callback served by the same HTTP server; refresh; read client (playlists, playlist tracks,
+  Liked). **AC:** after ⏸A/⏸B, the UI shows Spotify connected; `/api/catalog/refresh` returns
+  the user's Spotify playlists + Liked with ISRCs on a sample tracklist.
+- **Phase 3 — Apple auth + read.** Dev-token signing, MusicKit page at `/auth/apple/musickit`,
+  MUT capture POSTed back to the server; storefront resolution; read client (library playlists,
+  Favorites, catalog search, ISRC lookup). **AC:** after ⏸C/⏸D, the UI shows Apple connected;
+  `doctor` resolves storefront and the Apple **delete-capability probe** runs and records its
+  result (the probe is retained even though v1 has no removals — see §6.2 for why).
+- **Phase 4 — Matching.** `identity`, `scoring`, `matcher` for both directions; ledger-backed
+  match cache. **AC:** a known explicit Spotify track resolves to the explicit Apple master via
+  ISRC (not the clean version); a no-ISRC track resolves via scored search or is flagged
+  unmatched; symmetric Apple→Spotify works.
+- **Phase 5 — Permissions preflight + gating.** `preflight/checks.ts` + `preflight/runner.ts`;
+  `/api/preflight/*` endpoints + SSE; the UI's Permissions panel with the **Check permissions**
+  button and the live checklist (grouped Environment / Spotify / Apple, with intra-group skips
+  when a prerequisite fails); the gating policy enforced both client-side (Catalog and Run
+  buttons disabled with contextual hover text) and server-side (412 on `POST /api/catalog/refresh`
+  and `POST /api/operations` when not gated open); refresh-aware auto-invalidation in
+  `util/http.ts` (one token refresh / dev-token re-sign and retry before invalidating). The
+  `doctor` CLI is wired to the same orchestrator with `surface='cli'`. **AC:**
+  1. With valid creds, **Check permissions** runs the 10 checks (env first, then Spotify and
+     Apple groups in parallel). Each check streams a pass/fail event with a redaction-safe
+     detail line; the gate flips to "passed" and the Catalog/Run controls enable.
+  2. With a deliberately missing scope (e.g. re-consenting without `user-library-modify`),
+     `spotify_scopes` fails with the missing-scope name and remediation; gate stays closed.
+  3. With a missing env key, all downstream checks record `skip` and the gate stays closed.
+  4. Backdating the latest `preflight_runs.finished_at` to >24h ago closes the gate, and
+     `POST /api/catalog/refresh` returns 412 with the "soft expiry" reason.
+  5. Simulating a 401 from a Spotify call: `util/http.ts` refreshes and retries once; if the
+     retry succeeds, the gate stays open and no invalidation row is written. If the retry still
+     401s, an `invalidated` row with `trigger='auto-401'` is written and the UI prompts a
+     re-check. Same shape for Apple (re-sign + retry). A 403 with a scope-error body invalidates
+     with `trigger='auto-403-scope'`; a rate-limit 403 does not invalidate.
+  6. A `doctor` pass written from the CLI satisfies the UI's gate (the UI re-fetches
+     `/api/preflight/latest` and the gate opens), and vice versa.
+- **Phase 6 — Catalog cache + Operation form UI.** `catalog/catalog.ts` + `/api/catalog/*`
+  endpoints + SSE refresh stream; the UI's Operation form populates dropdowns from the cache,
+  enforces source ≠ destination, and disables the free-text input when Liked/Favorites is
+  selected. **AC:** clicking **Update Catalog** refreshes both sides with live progress; the
+  dropdowns populate; the Run button enables only when preflight has passed, both targets are
+  resolved, and an Operation is not already running.
+- **Phase 7 — Operation runner + live status.** `operation/runner.ts` executes the additive
+  transfer per §8, emits SSE events through `/api/operations/:id/events`, persists the event
+  log + summary to the ledger; the Run panel streams status. **AC:** an Operation moves missing
+  tracks from S to D and skips items already in D; a second run of the same Operation writes
+  zero (idempotent); a mid-run failure is recorded and does not abort; reconnecting to the SSE
+  stream replays prior events from the ledger.
+- **Phase 8 — UX polish.** Helpful errors at each pause point (named env var, exact next
+  command); the UI surfaces a reconnect prompt on 401 (in addition to the auto-invalidation
+  from Phase 5); `util/log.ts` redacts `Authorization` and `Music-User-Token`; the event log is
+  readable and copyable. **AC:** all surfaces are documented and working; logs never contain
+  tokens.
+- **Phase 9 — Publish prep.** Final secrets audit, README setup walkthrough, license. **AC:**
+  clean repo, no secrets/data tracked. **⏸ PAUSE POINT E (optional):** ask the human before
+  creating or pushing to a GitHub remote; do not create the remote autonomously.
 
 ---
 
 ## 14. Definition of done
 
-- All eight phases pass their acceptance criteria.
-- `plan` and `sync --apply` work for at least one real playlist pair **and** the Liked⇆Favorites
-  pair, verified by the human.
-- Re-running `sync --apply` with no changes writes nothing (idempotent).
-- `doctor` reports green on env, both token sets, storefront, and records the Apple delete-probe
-  result.
-- README explains setup (incl. the four credential pause points) and states the removal asymmetry
-  honestly.
-- A secrets audit confirms the public repo is clean: no `.p8`, no `.env`, no tokens, no `reports/`,
-  no `data/`.
+- All nine phases pass their acceptance criteria.
+- The UI's **Check permissions** button runs the full 10-check preflight (env, Spotify ×4,
+  Apple ×5), all checks pass on a correctly configured environment, and the gating policy
+  (latest pass within 24h, refresh-aware auto-invalidation) prevents catalog refresh and
+  Operations whenever it should.
+- The web UI can run, end-to-end, an Operation from a real Spotify playlist to a real Apple
+  Music playlist **and** the symmetric Apple → Spotify direction, verified by the human. At
+  least one of those Operations uses Liked/Favorites on one side.
+- Re-running the same Operation with no source changes writes nothing (idempotent).
+- `doctor` (CLI) and the UI's Permissions panel agree — a `doctor` pass satisfies the UI's
+  gate, and a UI pass shows up in `doctor`'s history.
+- README explains setup (incl. the four credential pause points + the preflight step), how to
+  launch the UI, and the additive-only / no-removals posture honestly.
+- A secrets audit confirms the public repo is clean: no `.p8`, no `.env`, no tokens, no `data/`,
+  no `web/` assets containing personal data.
 
 ---
 
@@ -585,9 +814,12 @@ This blueprint is a living document (§0). Whenever you change anything in the *
 tier, append a row here. Leave the **invariants** tier untouched unless the human explicitly amends
 it — and if they do, record that too, attributed to the human.
 
-| Date   | Section(s) | Change                     | Rationale      | Invariants confirmed intact |
-| ------ | ---------- | -------------------------- | -------------- | --------------------------- |
-| _seed_ | —          | Initial blueprint authored | Starting point | n/a                         |
+| Date       | Section(s)                                        | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Rationale                                                                                                                                                                                                        | Invariants confirmed intact                                                                                                                                                                                                                                                                          |
+| ---------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| _seed_     | —                                                 | Initial blueprint authored                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Starting point                                                                                                                                                                                                   | n/a                                                                                                                                                                                                                                                                                                  |
+| 2026-06-03 | preamble, §1, §3, §8, §9, §10, §11, §13, §14, §15 | **Pivot from CLI bidirectional sync → local web UI for one-time additive Operations** (human-directed). Operation = `{source, destination, sourceTarget, destinationTarget}`; targets ∈ `{playlist, liked, favorites}`. Removed `sync_pairs`/`baseline` tables and the three-way-merge engine; removed removal propagation and `--allow-removals`; removed `sync.config.json` (operations are ad-hoc in the UI). Added `catalog`, `operations`, `operation_events` tables; HTTP server with SSE; `web/` vanilla-JS UI. Kept all auth, matching, API-hazards, and reliability/redaction design.                                                                                                       | Human asked for a web UI driving one-time transfers with live status and a catalog-backed playlist picker. The simpler unidirectional model fits the new UX and removes a large class of reconciliation hazards. | Non-destruction strengthened (no removal code path at all in v1). Secrets/privacy unchanged. Truthfulness unchanged. Auditability preserved via `operations` + `operation_events`. Scope still bounded (single-user, local).                                                                         |
+| 2026-06-03 | §1, §3, §9, §11, §13, §14, §15                    | **Added a "Check permissions" preflight that gates Catalog and Operations** (human-directed). New 11-check sequence (env, both tokens, Spotify scopes, sample reads on each side, ISRC lookup, Apple delete-probe) runs from the UI's Permissions panel and from the CLI `doctor` via shared `preflight/runner.ts`. Catalog refresh + Operation runs are disabled UI-side and refused (412) server-side until the latest `preflight_runs` row is `passed`. A 401/403 from any downstream call auto-invalidates the pass. Added `preflight_runs` + `preflight_checks` tables and `src/preflight/`. Inserted as new Phase 5; pushed Catalog/UI to 6, Operation runner to 7, Polish to 8, Publish to 9.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Human asked to fail fast at the door — exercise every credential, scope, and capability the tool relies on before any catalog or Operation action, instead of discovering a missing scope mid-Operation.                                                                                              | Non-destruction unchanged (preflight only reads, plus the throwaway delete-probe per §6.2 which cleans up after itself). Secrets/privacy unchanged (`detail` column must be redaction-safe). Truthfulness unchanged (preflight is the runtime verifier). Auditability strengthened. Scope unchanged.                                |
+| 2026-06-03 | §1, §6.2, §9, §11.1, §13, §14, §15                | **Preflight design tightened after a validation pass on five concerns**: (1) gate now requires latest `passed` AND `finished_at` within 24h (soft expiry catches overnight drift); (2) **`apple_delete_probe` removed from v1 preflight** — v1 deletes nothing, so the probe is deferred along with removals (§6.2 now states this explicitly); the check list is now 10, not 11. (3) Auto-invalidation is refresh-aware: `util/http.ts` attempts one token refresh / dev-token re-sign + retry; only the second 401, or a 403 whose body indicates a scope problem (not rate-limit), invalidates the gate (`trigger='auto-401'` or `'auto-403-scope'`). (4) `spotify_scopes` is implemented by reading the granted scope list **persisted in `data/tokens.json`** from the OAuth `scope` response field — Spotify has no public token-introspection endpoint for PKCE clients, and inventing one would violate the truthfulness invariant. (5) Ten checks remain fine-grained but are presented in three UI groups (Environment / Spotify / Apple), env-first, Spotify and Apple groups run in parallel, intra-group skips when a prerequisite fails. Phase 5 AC rewritten as six numbered subcriteria. | Human asked to deeply validate and resolve the five open concerns I raised against the previous amendment. Each resolution favors safety (fail-fast, no invented endpoints), accuracy (refresh-aware invalidation reduces false-positives), and clarity (grouped UI, scoped detail messages). | Non-destruction unchanged. Secrets/privacy unchanged (scope list persisted alongside refresh token in already-gitignored `data/tokens.json`). Truthfulness **strengthened**: scope-check implementation explicitly forbids inventing an introspection endpoint; delete-probe deferral removes a latent untested code path. Auditability unchanged. Scope unchanged. |
 
 > Keep entries terse — one line each. The point is a traceable history of _why the design is what it
 > is now_, so a future you (or a future agent) can tell deliberate evolution apart from drift.
