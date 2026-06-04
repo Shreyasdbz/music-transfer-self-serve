@@ -72,19 +72,65 @@ export interface SpotifyTrack {
   readonly external_ids?: { isrc?: string };
 }
 
+// As of 2026-06, the playlist endpoint returns items whose payload is keyed
+// `item` (singular), not `track` (legacy). We accept both shapes — the legacy
+// path still works for `/v1/me/tracks` (Saved Tracks) and for any Spotify
+// surface that hasn't migrated yet.
 interface PlaylistTrackItem {
-  track: SpotifyTrack | null; // local files / deleted tracks come through null
+  item?: SpotifyTrack | null;
+  track?: SpotifyTrack | null;
+}
+
+function extractTrack(it: PlaylistTrackItem): SpotifyTrack | null {
+  return it.item ?? it.track ?? null;
 }
 
 interface SavedTrackItem {
   track: SpotifyTrack;
 }
 
+interface PlaylistWithItems {
+  items: Page<PlaylistTrackItem>;
+}
+
+/**
+ * Reads a playlist's tracks.
+ *
+ * Implementation note (observed 2026-06): Spotify returns 403 Forbidden on the
+ * dedicated `/v1/playlists/{id}/tracks` endpoint for apps in Development Mode
+ * quota — same token, same scopes, same playlist where `/v1/playlists/{id}`
+ * itself returns 200. The same paging data is reachable via the parent endpoint
+ * under a field named `items` (Spotify also appears to have renamed the
+ * legacy `tracks` field to `items` on the playlist object). We therefore:
+ *   - fetch the first page via `/v1/playlists/{id}` and read `items.items[].track`
+ *   - paginate via `items.next` if present
+ *
+ * If `items.next` points back at the restricted `/tracks` endpoint and 403s,
+ * we surface that to the caller — Phase 5 preflight will catch this and
+ * Phase 7 will need a workaround (likely: walk pages by re-fetching the parent
+ * with `?offset=...&fields=items.items(...),items.next`). Documented as a
+ * Phase 7 risk in PROGRESS.md.
+ */
 export async function listPlaylistTracks(playlistId: string): Promise<SpotifyTrack[]> {
-  const items = await paginate<PlaylistTrackItem>(
-    `${API}/v1/playlists/${encodeURIComponent(playlistId)}/tracks?limit=50`,
-  );
-  return items.map((i) => i.track).filter((t): t is SpotifyTrack => t !== null);
+  const first = await httpJson<PlaylistWithItems>({
+    method: "GET",
+    url: `${API}/v1/playlists/${encodeURIComponent(playlistId)}?market=from_token`,
+    headers: await bearer(),
+  });
+  const out: PlaylistTrackItem[] = [...first.items.items];
+  let url = first.items.next;
+  let pages = 1;
+  while (url && pages < MAX_PAGES) {
+    const page: Page<PlaylistTrackItem> = await httpJson<Page<PlaylistTrackItem>>({
+      method: "GET",
+      url,
+      headers: await bearer(),
+    });
+    out.push(...page.items);
+    url = page.next;
+    pages++;
+  }
+  return out.map(extractTrack).filter((t): t is SpotifyTrack => t !== null);
 }
 
 export async function listSavedTracks(): Promise<SpotifyTrack[]> {

@@ -304,3 +304,40 @@ Keep entries factual and terse.
   actionable) until ⏸A is resolved; callback with unknown state → 403; callback with
   missing state → 400. AC #1 (live Spotify connect) requires ⏸A + ⏸B and is what the
   human is unblocking next.
+- ⏸A + ⏸B done. Notes from the live flow:
+  - Safari blocked the callback navigation with "Use HTTPS-Only" enabled (WebKitErrorDomain:305).
+    Spotify followed RFC 8252 and allowed the loopback HTTP redirect, but Safari's privacy
+    default rejects it. Working in Chrome was the easy fix. README should call this out
+    in Phase 8 polish.
+  - Split `loadConfig()` into `loadConfig()` + `loadSpotifyConfig()` + (placeholder for
+    `loadAppleConfig()`) so callers between ⏸B and ⏸C don't fail just because Apple's keys
+    are absent. The full `loadConfig()` is now only used at sites that need both platforms.
+- AC #1 live verification (ephemeral script, deleted after run):
+  - All 6 required scopes captured and persisted in `data/tokens.json`.
+  - `GET /v1/me` ✅; `GET /v1/me/playlists` returned 11 playlists (7 owned, 4 followed);
+    `GET /v1/me/tracks` returned 1623 saved tracks with 5/5 ISRCs on the sampled head;
+    `GET /v1/playlists/{id}` (via the workaround below) returned 2 tracks for "Video Hard 🎬"
+    with 2/2 ISRCs.
+- **Spotify API drift surfaced during AC #1 — recorded here, will harden in Phase 5/7.**
+  Two concurrent changes Spotify rolled out that aren't in the blueprint's §6 priors:
+  1. `GET /v1/playlists/{id}/tracks` returns **403 Forbidden** for apps in Development
+     Mode quota, even on the owner's own playlists, with the correct scopes (verified:
+     `/v1/playlists/{id}` → 200 with full metadata for the same id with the same token;
+     only the `/tracks` subpath is restricted). Likely a side-effect of the late-2024
+     "Extended Quota Mode" rollout (https://developer.spotify.com/blog/2024-11-27-changes-to-the-web-api).
+  2. **Schema rename on the playlist object**: the field formerly known as `tracks` is now
+     `items` on `/v1/playlists/{id}`, and within each playlist-track entry the inner
+     field formerly `track` is now `item`. The legacy names still work on `/v1/me/tracks`
+     (Saved/Liked), so for now the client extracts both shapes.
+  Workaround in `listPlaylistTracks`: fetch the parent endpoint
+  `/v1/playlists/{id}?market=from_token` and walk `items.items[].item` (with `.track`
+  fallback). Pagination uses `items.next`, which may point back at the restricted
+  `/tracks` endpoint and 403 — confirmed once a playlist exceeds 50 items, this needs a
+  Phase 7 workaround (likely re-fetching the parent with `?offset=...&fields=items(...)`).
+  Documented in `src/clients/spotify.ts` listPlaylistTracks doc comment.
+- Phase 5 preflight will add a `spotify_playlist_tracks` probe that exercises this path
+  on the user's own playlist and surfaces the drift to the user with a clear remediation
+  pointer (Extended Quota Mode application, OR add user in App User Management).
+- Result: Phase 2 AC #1 ✅, AC #2 ✅, AC #3 ✅. Phase 2 done.
+- Next: Phase 3 — Apple Music auth (dev-token JWT + MusicKit MUT capture), with ⏸C
+  (Apple Developer setup) and ⏸D (consent in the UI).

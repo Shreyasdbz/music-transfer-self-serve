@@ -74,8 +74,12 @@ export function checkEnv(): EnvCheckResult {
   };
 }
 
-/** Read the full config. Throws if required keys are missing — callers that
- * want a soft check (e.g. preflight) use {@link checkEnv} instead. */
+/** Read the full config. Throws if any required key is missing — callers that
+ * want a soft check (e.g. preflight) use {@link checkEnv} instead. Use this
+ * only at sites that need both platforms; Spotify-only and Apple-only call
+ * sites should use {@link loadSpotifyConfig} / {@link loadAppleConfig} so
+ * they aren't blocked by the other platform's credentials being absent
+ * (e.g. between ⏸B and ⏸C). */
 export function loadConfig(): AppConfig {
   const r = checkEnv();
   if (r.missingKeys.length > 0) {
@@ -97,5 +101,33 @@ export function loadConfig(): AppConfig {
     applePrivateKeyPath: resolve(ROOT, process.env["APPLE_PRIVATE_KEY_PATH"]!),
     appleMusicKitAppName:
       process.env["APPLE_MUSICKIT_APP_NAME"] ?? "music-transfer-self-serve",
+  };
+}
+
+export interface SpotifyConfig {
+  readonly spotifyClientId: string;
+  readonly spotifyRedirectUri: string;
+}
+
+/** Spotify-only slice — usable between ⏸B and ⏸C when Apple creds are absent. */
+export function loadSpotifyConfig(): SpotifyConfig {
+  const missing: string[] = [];
+  for (const k of ["SPOTIFY_CLIENT_ID", "SPOTIFY_REDIRECT_URI"] as const) {
+    if (!process.env[k]?.trim()) missing.push(k);
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing Spotify env vars: ${missing.join(", ")} (see .env.example)`,
+    );
+  }
+  if (process.env["SPOTIFY_REDIRECT_URI"] !== SPOTIFY_REDIRECT_URI_EXPECTED) {
+    throw new Error(
+      `SPOTIFY_REDIRECT_URI must equal "${SPOTIFY_REDIRECT_URI_EXPECTED}" ` +
+        `(see blueprint §4 / Phase 2 AC #2)`,
+    );
+  }
+  return {
+    spotifyClientId: process.env["SPOTIFY_CLIENT_ID"]!,
+    spotifyRedirectUri: process.env["SPOTIFY_REDIRECT_URI"]!,
   };
 }

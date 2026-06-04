@@ -12,7 +12,7 @@
 //     60s sweep.
 
 import { createHash, randomBytes } from "node:crypto";
-import { loadConfig, SPOTIFY_REDIRECT_URI_EXPECTED } from "../config.js";
+import { loadSpotifyConfig, SPOTIFY_REDIRECT_URI_EXPECTED } from "../config.js";
 import { httpJson } from "../util/http.js";
 import { log } from "../util/log.js";
 import {
@@ -83,7 +83,7 @@ export interface AuthorizeStart {
 }
 
 export function buildAuthorizeUrl(): AuthorizeStart {
-  const cfg = loadConfig();
+  const cfg = loadSpotifyConfig();
   const state = base64url(randomBytes(32));
   const code_verifier = genVerifier();
   const code_challenge = challenge(code_verifier);
@@ -129,7 +129,7 @@ export async function handleCallback(stateParam: string, code: string): Promise<
   // OAuth `code` is single-use anyway. Delete now.
   stateStore.delete(stateParam);
 
-  const cfg = loadConfig();
+  const cfg = loadSpotifyConfig();
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code,
@@ -165,7 +165,7 @@ function persistTokens(tok: TokenResponse): void {
 }
 
 async function refreshAccessToken(current: SpotifyTokens): Promise<SpotifyTokens> {
-  const cfg = loadConfig();
+  const cfg = loadSpotifyConfig();
   const body = new URLSearchParams({
     grant_type: "refresh_token",
     refresh_token: current.refresh_token,
