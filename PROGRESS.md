@@ -1106,3 +1106,33 @@ Keep entries factual and terse.
   every credential boundary names its var/token + the exact next click; the event log and JSON
   summary are one-click copyable; redaction verified end-to-end. No invariants touched
   (additive-only, secrets discipline intact). No deps added.
+
+#### Phase 8 — multi-persona validation sweep + fixes (commit pending)
+
+5 personas (security, frontend-correctness, spec-conformance, ux-edge, invariants) reviewed
+the Phase 8 diff; each finding was adversarially refuted before surviving. 11 raw → **9
+confirmed**, collapsing to **4 root causes**. No invariant findings (additive-only + secrets
+discipline held; the sweep confirmed the redaction claim end-to-end). Fixes (all `web/app.js`):
+
+- **A — mid-run 401/403 hint named the wrong platform** (findings #1 high, #3/#4/#5 med, #9 low).
+  The error handler read `selectedDestination()` *live*, so flipping the destination radio
+  mid-run made the reconnect hint name the wrong platform. Fix: `watchOperation(id, destination)`
+  now captures `opDestination` at start (passed from `submitOperation`'s payload) and uses it in
+  the hint. Defence in depth: `setFormDisabled(true)` locks the source/destination radios +
+  target inputs + rematch for the duration of a run (re-enabled on `done`/`onerror`), so form
+  state can't change under a running operation at all.
+- **B — SSE disconnect stranded the user** (findings #6, #7 med). `es.onerror` previously just
+  reset state. Now, on a drop before the terminal `done`, it surfaces a "Disconnected — …
+  (see Past operations)" stage line, a partial summary from the live counts, reveals the copy
+  buttons, stashes a `{status:"disconnected",partial:true,…}` summary, and refreshes Past
+  operations (the server persisted every event; the op shows as `interrupted`). Guarded by an
+  `if (!operationRunning) return` so the normal `done` path doesn't double-fire it.
+- **C — Copy log silently truncated at LOG_CAP** (finding #2 high). The DOM is virtualized to the
+  last 500 lines for performance; copying it dropped older events with no notice. Fix: a full
+  untruncated `lastFullLog[]` buffer accumulates every line; Copy log copies that (labeled with
+  the true event count). The on-screen summary now says "(full N events; on-screen shows last
+  500, Copy log copies all)".
+- **D — dead `lastOperationId`** (finding #8 low). Removed; the copy rework made it unnecessary.
+
+Re-verified: `node --check web/app.js` clean, `tsc --noEmit` clean, **288 PASS / 0 FAIL**. No
+deps added; no `src/` logic changed (UI-only).

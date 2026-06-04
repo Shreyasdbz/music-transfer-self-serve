@@ -538,6 +538,16 @@ function updateRunEnabled() {
   else runBtn.title = "";
 }
 
+// Lock the operation form while a run is in flight, so the form state can't be
+// changed out from under the running operation (which would, e.g., make the
+// mid-run reconnect hint name the wrong platform). The Run button is gated
+// separately by updateRunEnabled().
+function setFormDisabled(disabled) {
+  for (const el of [...sourceRadios, ...destRadios, srcSelect, srcInput, dstSelect, dstInput, rematchEl]) {
+    el.disabled = disabled;
+  }
+}
+
 sourceRadios.forEach((r) => r.addEventListener("change", onSourceChange));
 destRadios.forEach((r) => r.addEventListener("change", onDestChange));
 
@@ -587,7 +597,7 @@ async function submitOperation(extraDest = {}) {
     }
     if (r.status === 202 && body.id) {
       operationStatus.textContent = "running…";
-      watchOperation(body.id);
+      watchOperation(body.id, payload.destination);
       return;
     }
     operationStatus.textContent = r.ok ? "ok" : `error ${r.status}: ${body.error ?? ""}`;
@@ -606,18 +616,30 @@ const runSummary = document.getElementById("run-summary");
 
 const LOG_CAP = 500;
 
-function watchOperation(id) {
+function watchOperation(id, destination) {
   operationRunning = true;
+  // Capture the destination platform NOW, at start. The mid-run 401/403 hint
+  // must name the platform this operation actually writes to — reading the live
+  // radio at error time would name the wrong platform if the user flipped it
+  // mid-run. We also disable the form inputs below as defence in depth.
+  const opDestination = destination ?? selectedDestination();
+  setFormDisabled(true);
   updateRunEnabled();
   runLog.hidden = false;
   runLog.innerHTML = "";
   runSummary.hidden = true;
+  document.getElementById("run-copy-actions").hidden = true;
   const counts = { matched: 0, skipped: 0, written: 0, unmatched: 0, failed: 0 };
   let read = 0;
   let logCount = 0;
+  // Full, untruncated log buffer for Copy log. The DOM is virtualized to the
+  // last LOG_CAP lines for performance, but the copy must be complete — copying
+  // the DOM would silently drop everything older than the cap.
+  lastFullLog = [];
 
   const appendLog = (line) => {
     logCount++;
+    lastFullLog.push(line);
     const div = document.createElement("div");
     div.className = "run-log-line";
     div.textContent = line;
@@ -670,7 +692,7 @@ function watchOperation(id) {
       // exact fix (§11.1 actionable errors) instead of a bare status code.
       const fix =
         p.status === 401 || p.status === 403
-          ? `  → reconnect ${selectedDestination() === "spotify" ? "Spotify" : "Apple Music"} (auth lapsed), then re-run — already-written tracks will skip`
+          ? `  → reconnect ${opDestination === "spotify" ? "Spotify" : "Apple Music"} (auth lapsed), then re-run — already-written tracks will skip`
           : "";
       appendLog(`! failed  ${p.source_id} (status ${p.status})${fix}`);
     } else if (p.message) {
@@ -681,23 +703,36 @@ function watchOperation(id) {
   es.addEventListener("done", (e) => {
     es.close();
     operationRunning = false;
+    setFormDisabled(false);
     updateRunEnabled();
     const p = JSON.parse(e.data);
     const s = p.summary ?? counts;
     runStage.textContent = `Done — ${p.status}`;
     runSummary.hidden = false;
-    runSummary.textContent = `${p.status}: read ${s.read} · matched ${s.matched} · skipped ${s.skipped} · written ${s.written} · unmatched ${s.unmatched} · failed ${s.failed}` + (logCount > LOG_CAP ? `  (showing last ${LOG_CAP} of ${logCount} events)` : "");
+    runSummary.textContent = `${p.status}: read ${s.read} · matched ${s.matched} · skipped ${s.skipped} · written ${s.written} · unmatched ${s.unmatched} · failed ${s.failed}` + (logCount > LOG_CAP ? `  (full ${logCount} events; on-screen shows last ${LOG_CAP}, Copy log copies all)` : "");
     operationStatus.textContent = `done (${p.status})`;
     // Stash for the copy buttons + reveal them.
-    lastOperationId = id;
     lastSummaryJson = JSON.stringify({ status: p.status, ...s }, null, 2);
     document.getElementById("run-copy-actions").hidden = false;
     loadPastOperations();
   });
   es.onerror = () => {
     es.close();
+    if (!operationRunning) return; // already finished via the `done` event
+    // The SSE connection dropped before a terminal `done` (server restart, the
+    // network, a 5xx). Don't strand the user: surface what streamed so far and
+    // let them copy the partial log. The server persisted every event, so the
+    // operation also shows up (status `interrupted`) under Past operations.
     operationRunning = false;
+    setFormDisabled(false);
     updateRunEnabled();
+    runStage.textContent = "Disconnected — stream dropped before completion (operation may still be running server-side; see Past operations).";
+    runSummary.hidden = false;
+    runSummary.textContent = `disconnected — partial: read ${read} · matched ${counts.matched} · skipped ${counts.skipped} · written ${counts.written} · unmatched ${counts.unmatched} · failed ${counts.failed} (log below may be incomplete)`;
+    operationStatus.textContent = "disconnected (partial)";
+    lastSummaryJson = JSON.stringify({ status: "disconnected", partial: true, read, ...counts }, null, 2);
+    document.getElementById("run-copy-actions").hidden = false;
+    loadPastOperations();
   };
 }
 
@@ -724,11 +759,12 @@ document.getElementById("operation-form").addEventListener("submit", (e) => {
   submitOperation();
 });
 
-// Copy buttons (run-panel). Summary is held in lastSummaryJson; the log is the
-// visible run-log text. clipboard.writeText needs a secure context, but
-// 127.0.0.1 counts as secure for the Clipboard API.
-let lastOperationId = null;
+// Copy buttons (run-panel). Summary is held in lastSummaryJson; the log copies
+// lastFullLog — the COMPLETE event list, not the virtualized DOM (which only
+// keeps the last LOG_CAP lines), so Copy log never silently truncates.
+// clipboard.writeText needs a secure context, but 127.0.0.1 counts as secure.
 let lastSummaryJson = "";
+let lastFullLog = [];
 const copyStatus = document.getElementById("copy-status");
 async function copyText(text, label) {
   try {
@@ -740,10 +776,7 @@ async function copyText(text, label) {
   setTimeout(() => (copyStatus.textContent = ""), 2000);
 }
 document.getElementById("copy-summary").addEventListener("click", () => copyText(lastSummaryJson, "summary"));
-document.getElementById("copy-log").addEventListener("click", () => {
-  const lines = [...runLog.querySelectorAll(".run-log-line")].map((d) => d.textContent).join("\n");
-  copyText(lines, "log");
-});
+document.getElementById("copy-log").addEventListener("click", () => copyText(lastFullLog.join("\n"), `log (${lastFullLog.length} events)`));
 
 // ── Disambiguation modal ────────────────────────────────────────────────
 
