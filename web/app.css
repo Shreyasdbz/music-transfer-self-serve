@@ -168,3 +168,77 @@ button:hover:not(:disabled) {
 .check-group li.check-fail {
   color: var(--warn);
 }
+
+/* ── Phase 6: Operation form + catalog + modal ─────────────────────── */
+.form-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.6rem;
+  flex-wrap: wrap;
+}
+.form-label {
+  font-weight: 600;
+  width: 9rem;
+}
+.form-row select,
+.form-row input[type="text"] {
+  font: inherit;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-width: 14rem;
+}
+.form-row input[type="text"]:disabled,
+.form-row select:disabled {
+  background: #f0f0f0;
+  opacity: 0.6;
+}
+.advanced {
+  margin: 0.5rem 0;
+  font-size: 0.85rem;
+}
+.advanced summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+#catalog-progress {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-top: 0.4rem;
+}
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal[hidden] {
+  display: none;
+}
+.modal-card {
+  background: white;
+  border-radius: 10px;
+  padding: 1.25rem 1.5rem;
+  max-width: 30rem;
+  width: 90%;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+.modal-card h3 {
+  margin: 0 0 0.5rem;
+}
+#disambig-candidates {
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0;
+}
+#disambig-candidates li {
+  margin: 0.3rem 0;
+}
+#disambig-candidates button {
+  width: 100%;
+  text-align: left;
+}

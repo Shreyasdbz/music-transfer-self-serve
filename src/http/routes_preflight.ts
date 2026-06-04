@@ -138,18 +138,18 @@ export function registerPreflightRoutes(): void {
     });
   });
 
-  // ── Gated stubs (Phase 6 / Phase 7 implement the bodies) ────────────────
+  // Catalog refresh + Operations routes live in routes_catalog.ts /
+  // routes_operations.ts (Phase 6) — they share the gate guard below.
+}
 
-  const gatedStub = (res: ServerResponse, phaseLabel: string): void => {
-    const gate = getGateState();
-    if (!gate.open) {
-      sendJson(res, 412, { error: "gate_closed", reason: gate.reason });
-      return;
-    }
-    // Gate is open but the feature isn't built yet.
-    sendJson(res, 501, { error: "not_implemented", detail: `${phaseLabel} lands in a later phase` });
-  };
-
-  route("POST", "/api/catalog/refresh", ({ res }) => gatedStub(res, "Catalog refresh"));
-  route("POST", "/api/operations", ({ res }) => gatedStub(res, "Operations"));
+/** Shared gate guard for the gated POST routes (§11.1). Returns true and
+ * sends a 412 with the contextual reason when the gate is closed; the caller
+ * should return early. */
+export function gateClosed(res: ServerResponse): boolean {
+  const gate = getGateState();
+  if (!gate.open) {
+    sendJson(res, 412, { error: "gate_closed", reason: gate.reason });
+    return true;
+  }
+  return false;
 }

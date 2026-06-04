@@ -863,3 +863,68 @@ Keep entries factual and terse.
   suites. Lint + build clean.
 - No code change to the auth-failure sink contract or any invariant; the only spec touch
   was the §9 comment (doc-only). Ledger restored from backup after the live re-verify.
+
+### 2026-06-04 — Phase 6: Catalog cache + Operation form UI
+
+- Start: implement `ledger/catalogStore.ts` (catalog table queries + name-match for
+  disambiguation), `catalog/catalog.ts` (incremental, cancellable per-platform refresh
+  writing `catalog` rows with `__liked__`/`__favorites__` sentinels + SSE progress),
+  the catalog HTTP routes (real `POST /api/catalog/refresh` replacing the gated 501 stub,
+  `/refresh/cancel`, `GET /api/catalog`, `GET /api/catalog/events` SSE), the §9 free-text
+  duplicate-name resolution on `POST /api/operations` (0/1/≥2 → create-marker/auto/422),
+  and the Operation form UI (Source/Dest radios auto-filtered, target dropdowns from the
+  cache + free-text, Liked/Favorites pinned, Run-enable gating, 422 disambiguation modal).
+  No pause points.
+
+- Decisions:
+  - `catalogStore.ts` upserts catalog rows keyed on (platform, kind, external_id) with
+    `__liked__`/`__favorites__` sentinels; `findCatalogByName` powers §9 disambiguation
+    (normalize = trim+collapse+casefold, lighter than match/identity.normalize since
+    playlist names match as typed). Stale-removal deletes rows older than a completed
+    refresh's start, so a deleted-upstream playlist drops out — but is SKIPPED on cancel
+    so partial results survive.
+  - `catalog/catalog.ts` is incremental (per-platform, playlist-by-playlist), cancellable
+    (a flag checked between playlists; cancel keeps written rows + skips stale-removal),
+    one-refresh-at-a-time, and streams progress over a single EventEmitter. Spotify Liked
+    count comes from a cheap `?limit=1` total probe; Apple favorites/track-counts are
+    stored null (no cheap count). Apple playlist track_count is null (the listing endpoint
+    omits it).
+  - HTTP: the gated 501 stub for `POST /api/catalog/refresh` became the real gated
+    refresh (202 / 409 / 412); added `/api/catalog/refresh/cancel`, `GET /api/catalog`,
+    `GET /api/catalog/events` SSE. The catalog + operations routes moved out of
+    routes_preflight into their own modules (avoiding double-registration) and share a
+    `gateClosed()` guard.
+  - `routes_operations.ts` does §9 target resolution: liked/favorites → sentinel; dropdown
+    id → direct; free-text → classify as URL/raw-id (Spotify open.spotify/spotify: + 22-char
+    id; Apple p./pl. id + music.apple URL) or NAME → 0/1/≥2 disambiguation. ≥2 → 422 with
+    candidates; 0-on-source → 422 source_playlist_not_found; 0-on-dest → create marker;
+    dest `forceCreate` (modal "create anyway") bypasses an ambiguous name. A fully-resolved
+    request returns 501 (the transfer runner is Phase 7) — the 422 disambiguation is what
+    "succeeds past" in AC #4.
+  - UI: Catalog panel (Update + Cancel + live progress + last-fetched); Operation form with
+    Source/Dest radios (auto-filter: picking a source disables the matching dest radio and
+    flips it; targets reset on change), target dropdowns (Liked/Favorites pinned ★, then
+    playlists) mutually exclusive with the free-text input, Advanced→Rematch, and the
+    disambiguation modal (pick a candidate → resubmit with id; dest-side "Create new with
+    this name anyway"). Run-enable = gate open AND source≠dest AND both targets present AND
+    not running, with a hover reason when blocked.
+- Result: **all 4 Phase 6 AC verified live.**
+  1. ✅ Update Catalog refreshed both sides — 11 Spotify playlists + Liked Songs (1623),
+     27 Apple playlists + Favorite Songs (40 rows total); `last_fetched` set for both;
+     dropdowns populate from `GET /api/catalog`.
+  2. ✅ Start-then-cancel kept all already-stored rows (42 → 42); cancel returns
+     `{cancelled:true}`; stale-removal skipped.
+  3. ✅ Run-enable gating: server returns 412 on `POST /api/catalog/refresh` when the gate
+     is closed (backdated >24h); the client `updateRunEnabled` disables Run unless gate
+     open + source≠dest + both targets present.
+  4. ✅ Free-text dest name "My Mix" matching 2 cached playlists → 422 with the candidate
+     list (id/name/owner/track_count/url); resubmit with a chosen id → past the 422 (501,
+     Phase-7 runner). Also verified: 1-match auto-resolve, 0-dest create, 0-source 422,
+     and forceCreate bypass.
+- Tests: `catalogStore.test.ts` (12 — normalize, upsert/sentinels, name-match
+  case/space-insensitive, stale-removal). **Suite: 250/250 PASS** across 11 suites. Lint +
+  build clean. Ledger restored from backup after the live AC (seeded dup rows + gate
+  backdate removed).
+- Next: Phase 7 — Operation runner. The `POST /api/operations` 501 flips to a real run:
+  read source set, match (Phase 4), write missing to destination, SSE status, ledger
+  event log; the resolved-target shapes this route already returns are exactly its input.

@@ -139,6 +139,19 @@ export async function listSavedTracks(): Promise<SpotifyTrack[]> {
   return items.map((i) => i.track);
 }
 
+/** Cheap count of the user's Liked Songs — `GET /v1/me/tracks?limit=1`
+ * returns `{ total }` without fetching the collection. Used by the catalog
+ * refresh to populate the Liked-Songs row's track_count. */
+export async function getSavedTracksTotal(): Promise<number> {
+  const r = await httpJson<{ total: number }>({
+    method: "GET",
+    url: `${API}/v1/me/tracks?limit=1`,
+    headers: await bearer(),
+    ...AUTH_EXTRAS,
+  });
+  return r.total ?? 0;
+}
+
 // ── Catalog search (Tier-1 / Tier-2 matching) ──────────────────────────
 
 interface SearchResponse {
