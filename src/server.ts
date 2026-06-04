@@ -5,14 +5,18 @@
 
 import { closeLedger, openLedger } from "./ledger/db.js";
 import { startHttpServer } from "./http/server.js";
+import { registerAuthRoutes } from "./http/routes_auth.js";
+import { stopStateSweeper } from "./auth/spotify.js";
 import { log } from "./util/log.js";
 
 async function main(): Promise<void> {
   openLedger();
+  registerAuthRoutes();
   const handle = await startHttpServer();
 
   const shutdown = (signal: string): void => {
     log.info("server.shutdown", { signal });
+    stopStateSweeper();
     void handle.close().finally(() => {
       closeLedger();
       process.exit(0);

@@ -253,3 +253,16 @@ Keep entries factual and terse.
 - Next: Phase 2 — Spotify PKCE flow, the §11.0 OAuth `state` + `code_verifier` store
   with 10-minute TTL, refresh handling, read client, and Spotify Connect button
   reaching ⏸A / ⏸B.
+
+### 2026-06-03 — Phase 2: Spotify auth + read
+
+- Start: implement Spotify PKCE flow end-to-end — `src/util/http.ts` (fetch wrapper with
+  backoff + Retry-After), tokens store at `data/tokens.json` (0600), `src/auth/spotify.ts`
+  (PKCE gen + 10-min state store + token exchange persisting `scope` + refresh-on-expiry
+  per §11.0 / §5.1), `src/clients/spotify.ts` (read client: profile, playlists, playlist
+  tracks, Liked with pagination + ISRC), HTTP routes `POST /api/auth/spotify/start`,
+  `GET /auth/spotify/callback` (Origin-exempt; state-validated), `GET /api/auth/status`,
+  a minimal "Connect Spotify" UI button driving the popup, and an inline unit test
+  enforcing byte-equality of `SPOTIFY_REDIRECT_URI` across `.env.example`, the start-URL
+  builder, and the callback route registration (Phase 2 AC #2). Then PAUSE at ⏸A with
+  copy-pasteable Spotify Dashboard instructions; resume for ⏸B (consent in the UI).

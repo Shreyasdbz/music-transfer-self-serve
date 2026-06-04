@@ -67,10 +67,50 @@ function csrfOk(req: IncomingMessage, expected: string): boolean {
   return typeof token === "string" && token === expected;
 }
 
-// Routes whose paths are exempted from the Origin check. Spotify's OAuth
-// redirect is a top-level GET navigation with no Origin header — the route
-// handler validates `state` instead (Phase 2).
-const ORIGIN_EXEMPT_GET_PATHS = new Set<string>(["/auth/spotify/callback"]);
+// Read the full request body as a Buffer, capped to defend against runaway
+// uploads. Local-only server, single user, no big bodies expected.
+const BODY_BYTE_LIMIT = 1 << 20; // 1 MiB
+
+export async function readBody(req: IncomingMessage): Promise<Buffer> {
+  return new Promise<Buffer>((resolvePromise, rejectPromise) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    req.on("data", (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > BODY_BYTE_LIMIT) {
+        rejectPromise(new Error("body_too_large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolvePromise(Buffer.concat(chunks)));
+    req.on("error", rejectPromise);
+  });
+}
+
+export async function readJsonBody<T = unknown>(req: IncomingMessage): Promise<T> {
+  const buf = await readBody(req);
+  if (buf.length === 0) return {} as T;
+  return JSON.parse(buf.toString("utf8")) as T;
+}
+
+/** Serve a tiny HTML page that closes its own window — used by both OAuth
+ * callbacks. Body is wrapped in HTML; redact() doesn't need to touch the
+ * surrounding markup since it's hardcoded. */
+export function sendAutoCloseHtml(res: ServerResponse, message: string): void {
+  const html = `<!doctype html><meta charset="utf-8"><title>${message}</title>
+<style>body{font-family:-apple-system,sans-serif;padding:2rem;color:#222}</style>
+<p>${message}</p><p>You can close this window.</p>
+<script>setTimeout(()=>{try{window.close()}catch(_){}}, 250);</script>`;
+  res.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Length": Buffer.byteLength(html),
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+  });
+  res.end(html);
+}
 
 export interface ServerHandle {
   readonly server: Server;
@@ -92,10 +132,13 @@ export function startHttpServer(): Promise<ServerHandle> {
       const url = new URL(req.url ?? "/", HTTP_ORIGIN);
       const method = req.method as Method;
 
-      // 2) Origin + CSRF check — applies to every state-changing request.
+      // 2) Origin + CSRF check — applies to every state-changing (POST)
+      // request. GET routes are not gated because cross-origin reads are
+      // already blocked by the browser; the Spotify OAuth redirect callback
+      // is a GET top-level navigation (no Origin header) and validates
+      // `state` inside the route handler instead (§11.0).
       if (method === "POST") {
-        const exempt = ORIGIN_EXEMPT_GET_PATHS.has(url.pathname); // none today, but symmetric
-        if (!exempt && !originOk(req)) {
+        if (!originOk(req)) {
           sendStatus(res, 403, "origin_invalid");
           return;
         }
