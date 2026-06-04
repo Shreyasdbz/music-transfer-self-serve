@@ -584,3 +584,66 @@ Keep entries factual and terse.
   verifies auth status, XSS fix, and 413 path all work end-to-end.
 
 - **Phase 4 (matching engine) starts on a clean floor.** Ready to go.
+
+### 2026-06-04 — Phase 4: Matching engine
+
+- Start: implement `src/match/identity.ts` (normalize / stripFeatured / normIsrc /
+  identityKey / VARIANT_TOKENS), `src/match/scoring.ts` (§7 rubric — +40 title / +30
+  primary artist / +15 duration / +10 explicit / +5 album / -25 per unwanted variant
+  token; threshold 70), `src/clients/spotify.ts` additions
+  (`searchTracksByIsrc`, `searchTracks`), `src/match/matcher.ts` (tiered match both
+  directions with deterministic ISRC disambiguation: album match → non-compilation →
+  first validated), and `src/ledger/tracksCache.ts` (get/put/delete against the §9
+  `tracks` table). Phase 4 has no pause points.
+- Decisions:
+  - `CanonicalTrack` is the platform-agnostic shape both directions share. Optional
+    fields declared `T | undefined` (not bare `T?`) because the strict
+    `exactOptionalPropertyTypes` is hostile to spreading undefineds otherwise — most
+    upstream tracks legitimately have missing ISRC / duration / explicit. Adapters
+    `spotifyToCanonical` / `appleCatalogToCanonical` convert; the matcher's Tier-1
+    candidates from the live API are also flattened to canonical so disambiguation
+    can compare apples-to-apples.
+  - Disambiguation rule from §7 implemented in `disambiguateIsrcCandidates`: source-
+    album exact match wins → first non-compilation (regex against "greatest hits",
+    "best of", "essentials", etc.) → first validated. Deterministic; same inputs
+    always pick the same candidate so re-runs of the same Operation are stable.
+  - The fuzzy fallback identity key uses 2-second duration buckets so ±1s upstream
+    jitter still collides. Buckets are intentionally coarse — fuzzy is for the
+    cache, not for selection (which is the matcher's job).
+  - **Spotify search quirk discovered live**: `GET /v1/search?q=isrc:CODE&type=track`
+    rejects `limit > 1` with `400 Invalid limit` (verified across `limit=20`,
+    `limit=1`, omitted). Omitting the param works and returns Spotify's default,
+    which is sufficient since `isrc:` queries return at most a small number of
+    candidates anyway. Documented inline.
+  - `tracksCache.ts` uses `ON CONFLICT(identity_key) DO UPDATE` with `COALESCE` on
+    the Spotify/Apple ids so the cache row preserves whichever side wasn't part of
+    the current match direction. This will matter in Phase 7 when an Apple→Spotify
+    match for a track that already had a Spotify→Apple cache entry should add the
+    spotify_id without clobbering the existing apple_catalog_id.
+  - Pre-existing `util/http.ts` improvements (HttpError now passes the body through
+    `redact()` and the URL through `redactUrl()`) mean Phase 4's logging surface is
+    already secrets-clean. No new redaction work needed.
+- Result: **all 4 Phase 4 AC sub-criteria PASS live**.
+  - **#1a Tier-1 explicit master via ISRC** — Drake's "Dust" (Spotify, ISRC
+    USUG12602488, explicit=true) → Apple catalog id 6769568594, dest_explicit=true,
+    confidence 100. The matcher correctly picks the explicit master via ISRC, not a
+    clean variant.
+  - **#1b No-ISRC fuzzy track** — Same Drake track with ISRC blanked → Tier-2
+    scored search → matches the same Apple catalog song with confidence 100.
+    Tier-2 path exercised end-to-end.
+  - **#1c Symmetric Apple → Spotify** — Apple's "Janice STFU" (ISRC USUG12604763)
+    → Spotify track id 514joG57v4yKTsfQmz7stz via Tier-1 ISRC.
+  - **#1d Ledger cache** — Repeat call returns `fromCache=true`; the persisted
+    row in `tracks` has the resolved mapping.
+- Unit coverage in `src/match/match.test.ts`: **42 assertions** covering normalize /
+  stripFeatured / normTitle / normArtist / normIsrc / durationsClose / variantTokens
+  / identityKey, score rubric for perfect / wrong-artist / wrong-duration /
+  explicit-mismatch / remix-penalty / featured-drift, plus matcher cache hit and
+  adapter coverage. Test snapshot-restores `data/ledger.sqlite` so it never leaves
+  pollution on disk.
+- **Total suite: 154/154 PASS** across 6 suites (log 39, spotify 21, apple 24,
+  http 10, ledger 18, match 42). Lint clean. Build clean.
+- Next: Phase 5 — Permissions preflight + gate. The new client primitives
+  (`searchByIsrc`, `searchCatalog`, `getTopChartSongs`, `searchTracksByIsrc`,
+  `searchTracks`) give the preflight runner everything it needs for the
+  `spotify_search` and `apple_isrc_lookup` checks.

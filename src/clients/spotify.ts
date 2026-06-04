@@ -122,3 +122,29 @@ export async function listSavedTracks(): Promise<SpotifyTrack[]> {
   const items = await paginate<SavedTrackItem>(`${API}/v1/me/tracks?limit=50`);
   return items.map((i) => i.track);
 }
+
+// ── Catalog search (Tier-1 / Tier-2 matching) ──────────────────────────
+
+interface SearchResponse {
+  tracks?: { items: SpotifyTrack[] };
+}
+
+/** Tier-1 Apple→Spotify match. Spotify accepts `q=isrc:CODE` and returns the
+ * recording(s) carrying that ISRC. Multiple results are possible (same
+ * recording across single/album/deluxe); the matcher disambiguates.
+ *
+ * Important: Spotify's `q=isrc:` search rejects `limit` > 1 with
+ * `400 Invalid limit` (verified live 2026-06-04). Omitting `limit` returns
+ * Spotify's default — enough to disambiguate. */
+export async function searchTracksByIsrc(isrc: string): Promise<SpotifyTrack[]> {
+  const url = `${API}/v1/search?q=${encodeURIComponent(`isrc:${isrc}`)}&type=track`;
+  const r = await httpJson<SearchResponse>({ method: "GET", url, headers: await bearer() });
+  return r.tracks?.items ?? [];
+}
+
+/** Tier-2 scored search. `term` is typically "<title> <primary artist>". */
+export async function searchTracks(term: string, limit = 25): Promise<SpotifyTrack[]> {
+  const url = `${API}/v1/search?q=${encodeURIComponent(term)}&type=track&limit=${limit}`;
+  const r = await httpJson<SearchResponse>({ method: "GET", url, headers: await bearer() });
+  return r.tracks?.items ?? [];
+}
