@@ -1,0 +1,7 @@
+node_modules
+dist
+data
+secrets
+.env
+*.p8
+package-lock.json

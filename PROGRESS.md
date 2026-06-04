@@ -160,3 +160,42 @@ Keep entries factual and terse.
 - Spec is now at **READY TO BUILD** per the validation report's verdict bar; no
   known gaps that would cause first-run failure or guaranteed mid-build amendments.
 - Next: Phase 0 scaffold per §13.
+
+### 2026-06-03 — Phase 0: Scaffold
+
+- Start: create `package.json`, `tsconfig.json`, ESLint/Prettier configs, `.env.example`,
+  `web/index.html` placeholder; confirm `.gitignore` is complete; verify `npm install` +
+  `npm run build` (tsc on empty `src/`) exit 0; confirm secrets audit clean.
+- Decisions:
+  - `package.json` is `type: "module"` (ES modules per global instructions); scripts
+    `build` (`tsc --noEmit`), `start` (`tsx src/server.ts`), `doctor`
+    (`tsx src/cli.ts doctor`), plus `lint`/`format`. Engines pin Node ≥ 20.
+  - Dependencies match blueprint §2: `better-sqlite3`, `dotenv`, `jsonwebtoken` as
+    runtime deps; `tsx`, `typescript`, `eslint`+`@typescript-eslint`, `prettier`,
+    `@types/node`, `@types/jsonwebtoken` as dev. No `axios`, no `express` — built-in
+    `fetch` + `http`.
+  - `tsconfig.json` per §13: `strict`, `target: ES2022`, `lib: ['ES2023']`,
+    `module/moduleResolution: NodeNext`, `noUncheckedIndexedAccess`. Added
+    `exactOptionalPropertyTypes`, `verbatimModuleSyntax`, `isolatedModules` for stricter
+    type hygiene up front — cheap to enforce now, expensive to bolt on later.
+  - Prettier `proseWrap: preserve` per §13 (matches the `<!-- @format -->` directive in
+    tracked docs). ESLint configured via `.eslintrc.cjs` (legacy config) to dodge the
+    flat-config / `type: module` interaction; this is Phase 0 scaffolding, not load-
+    bearing.
+  - Added a tiny `src/server.ts` stub (`export {};`) because modern `tsc` errors out on
+    truly empty input (`TS18003`). The blueprint AC phrases this as "tsc on no input is
+    a no-op"; the stub is the literal minimum to satisfy that intent. Phase 1 overwrites
+    it with the real entrypoint.
+  - `web/` placeholder is three files (`index.html`, `app.css`, `app.js`) so the Phase 1
+    static handler has something to serve from day one.
+- Result: AC met.
+  1. `npm install` ✅ (187 packages, 0 vulnerabilities).
+  2. `npm run build` ✅ (exits 0; tsc finds the stub, no errors).
+  3. `git status` shows only the Phase 0 scaffold staged; `.env`, `node_modules/`,
+     `data/`, `secrets/`, `*.p8`, `tokens.json` all confirmed gitignored.
+  4. Secrets audit on the staged diff: no `BEGIN PRIVATE KEY`, no bearer-looking
+     strings, no `sk_live`/`sk_test` matches.
+  5. `sync.config.example.json` was already removed by the 2026-06-03 pivot
+     amendment — nothing to delete.
+- Next: Phase 1 — ledger schema + HTTP server skeleton + §11.0 security framework
+  (127.0.0.1 bind, Host/Origin middleware, CSRF token, startup reconciliation sweep).
