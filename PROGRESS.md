@@ -1163,3 +1163,30 @@ deps added; no `src/` logic changed (UI-only).
   0 FAIL**. Invariants intact (additive-only, secrets discipline). No deps added.
 - **⏸ PAUSE POINT E (optional):** stopping here. Awaiting the human's decision on whether to
   create/push a GitHub remote. Will not create the remote autonomously.
+
+#### Phase 8 — second validation sweep (re-review of the sweep-1 fix code)
+
+The human asked to re-run the validation rhythm on Phase 8. This was non-redundant: sweep-1's
+fixes (commit 752b1f6 — `setFormDisabled`, the `es.onerror` recovery, the `lastFullLog` buffer,
+the `opDestination` capture) were themselves new, unreviewed code. 5 personas (EventSource
+lifecycle, form-lock lifecycle, cross-operation state-bleed, security/redaction,
+spec/invariants); each finding adversarially refuted. **6 raw → 2 confirmed** (the fix code
+otherwise held: no lifecycle/state-bleed/redaction defects). Both confirmed were about the
+reconnect-hint *wording*; one fix covered both, plus a sibling pre-existing case:
+
+- **Truthfulness (high):** the mid-run 401/403 hint said "already-written tracks will skip on
+  re-run" unconditionally, but the §12.5 resume-union is deliberately NOT applied to a `create`
+  destination (runner.ts:100-109) — a re-run there makes a *new* playlist and re-writes
+  everything, so the skip claim was false. Fix: `submitOperation` now computes `resumeSafe`
+  (`liked`/`favorites`/existing-playlist-with-id ⇒ true; a free-text name that may resolve to a
+  new `create` ⇒ false) and passes it to `watchOperation`; the hint only promises skip when
+  `resumeSafe`, else "then re-run to finish the transfer". Never over-promises → never lies.
+- **Defensive (low):** `opDestination` could be `undefined` via a console-only submit, making the
+  binary ternary silently say "Apple Music". Fixed with a 3-way `opDestLabel`
+  (Spotify / Apple Music / "the destination service").
+- **Sibling fix (same root cause, pre-existing Phase 7 text):** the Past-operations
+  "interrupted → re-run to resume (already-written items skip)" tag had the identical gap. Now
+  conditional on the stored `destination_target.kind` — a `create` op shows "re-run starts a
+  fresh playlist (re-adds all matched tracks)".
+
+Re-verified: `node --check` clean, `tsc --noEmit` clean, **288 PASS / 0 FAIL**. No deps; UI-only.

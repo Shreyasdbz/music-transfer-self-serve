@@ -597,7 +597,14 @@ async function submitOperation(extraDest = {}) {
     }
     if (r.status === 202 && body.id) {
       operationStatus.textContent = "running…";
-      watchOperation(body.id, payload.destination);
+      // resumeSafe ⇔ the §12.5 resume-union will apply on re-run, so the "skip
+      // already-written" hint is truthful: an existing playlist (kind=playlist
+      // WITH an id), Liked, or Favorites. A free-text name (kind=playlist with a
+      // query, no id) may resolve server-side to a brand-new `create`, where it
+      // would NOT apply — so treat it as not-safe.
+      const dt = payload.destinationTarget;
+      const resumeSafe = dt.kind === "liked" || dt.kind === "favorites" || (dt.kind === "playlist" && Boolean(dt.id));
+      watchOperation(body.id, payload.destination, resumeSafe);
       return;
     }
     operationStatus.textContent = r.ok ? "ok" : `error ${r.status}: ${body.error ?? ""}`;
@@ -616,13 +623,14 @@ const runSummary = document.getElementById("run-summary");
 
 const LOG_CAP = 500;
 
-function watchOperation(id, destination) {
+function watchOperation(id, destination, resumeSafe) {
   operationRunning = true;
   // Capture the destination platform NOW, at start. The mid-run 401/403 hint
   // must name the platform this operation actually writes to — reading the live
   // radio at error time would name the wrong platform if the user flipped it
   // mid-run. We also disable the form inputs below as defence in depth.
   const opDestination = destination ?? selectedDestination();
+  const opDestLabel = opDestination === "spotify" ? "Spotify" : opDestination === "apple" ? "Apple Music" : "the destination service";
   setFormDisabled(true);
   updateRunEnabled();
   runLog.hidden = false;
@@ -689,11 +697,17 @@ function watchOperation(id, destination) {
     if (p.kind === "write_failed") {
       counts.failed++;
       // A 401/403 mid-run means the destination token/scope lapsed. Name the
-      // exact fix (§11.1 actionable errors) instead of a bare status code.
+      // exact fix (§11.1 actionable errors) instead of a bare status code. Only
+      // promise the "already-written tracks skip" idempotency when it's TRUE:
+      // the §12.5 resume-union applies to an existing playlist / Liked /
+      // Favorites, but NOT to a freshly-created playlist (runner.ts:100-109 —
+      // a re-run of a `create` destination makes a new playlist and re-writes
+      // everything), so claiming skip there would be false (truthfulness inv.).
+      const reRun = resumeSafe
+        ? "then re-run — already-written tracks will skip"
+        : "then re-run to finish the transfer";
       const fix =
-        p.status === 401 || p.status === 403
-          ? `  → reconnect ${opDestination === "spotify" ? "Spotify" : "Apple Music"} (auth lapsed), then re-run — already-written tracks will skip`
-          : "";
+        p.status === 401 || p.status === 403 ? `  → reconnect ${opDestLabel} (auth lapsed), ${reRun}` : "";
       appendLog(`! failed  ${p.source_id} (status ${p.status})${fix}`);
     } else if (p.message) {
       appendLog(`! error  ${p.message}`);
@@ -745,7 +759,22 @@ async function loadPastOperations() {
     for (const op of j.operations ?? []) {
       const li = document.createElement("li");
       const summary = op.summary ? JSON.parse(op.summary) : null;
-      const tag = op.status === "interrupted" ? " — re-run to resume (already-written items skip)" : "";
+      // Only promise resume-skip for destinations where the §12.5 resume-union
+      // applies. A `create` destination re-runs into a NEW playlist and
+      // re-writes everything (runner.ts:100-109), so "already-written items
+      // skip" would be false there (truthfulness invariant).
+      let destKind = "";
+      try {
+        destKind = JSON.parse(op.destination_target ?? "{}").kind ?? "";
+      } catch {
+        /* leave blank */
+      }
+      const tag =
+        op.status !== "interrupted"
+          ? ""
+          : destKind === "create"
+            ? " — re-run starts a fresh playlist (re-adds all matched tracks)"
+            : " — re-run to resume (already-written items skip)";
       li.textContent = `${op.source}→${op.destination}  ${op.status}${summary ? ` (${summary.written} written, ${summary.unmatched} unmatched)` : ""}${tag}`;
       list.appendChild(li);
     }
