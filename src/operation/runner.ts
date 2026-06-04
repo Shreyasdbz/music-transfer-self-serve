@@ -9,6 +9,8 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { HttpError } from "../util/http.js";
 import { log, redact } from "../util/log.js";
+import { SPOTIFY_ADD_BATCH, SPOTIFY_SAVE_BATCH } from "../clients/spotify.js";
+import { APPLE_ADD_BATCH } from "../clients/apple.js";
 import { identityKey, type CanonicalTrack } from "../match/identity.js";
 import {
   finishOperation,
@@ -89,16 +91,22 @@ export function startOperation(spec: OperationSpec): OperationHandle {
       const dKeys = new Set<string>(D.map((d) => identityKey(d.canonical)));
       // §12.5 resume soundness: union the live dest ids with ids written by
       // prior runs of this exact Operation tuple (handles eventual consistency
-      // after a crash-then-resume).
-      const writtenDestIds = new Set<string>([
-        ...D.map((d) => d.destId),
-        ...priorWrittenDestIds({
+      // after a crash-then-resume). NOT applied to a freshly-`create`d
+      // destination — a brand-new playlist has no prior contents, and the
+      // create tuple's prior-write events belong to a DIFFERENT (now-orphaned)
+      // playlist, so unioning them would wrongly skip every track and leave the
+      // new playlist empty.
+      const writtenDestIds = new Set<string>(D.map((d) => d.destId));
+      if (spec.destinationTarget.kind !== "create") {
+        for (const id of priorWrittenDestIds({
           source: spec.source,
           destination: spec.destination,
           source_target: targetJson(spec.sourceTarget),
           destination_target: targetJson(spec.destinationTarget),
-        }),
-      ]);
+        })) {
+          writtenDestIds.add(id);
+        }
+      }
       emit("stage", { stage: "destination_read", count: D.length });
 
       // Match phase (source order).
@@ -136,10 +144,17 @@ export function startOperation(spec: OperationSpec): OperationHandle {
           title: s.title,
         });
         if (writtenDestIds.has(destId)) {
+          // Already in the destination, written by a prior run, OR already
+          // staged earlier in THIS run — two distinct source tracks (e.g. a
+          // single-master ISRC and an album-master ISRC of the same recording,
+          // which carry different identity keys) can resolve to the same
+          // destination id. Adding `destId` to the set at STAGE time (below)
+          // makes the second one skip here instead of double-appending.
           summary.skipped += 1;
-          emit("skip", { source_id: s.sourceId, dest_id: destId, reason: "already_written" });
+          emit("skip", { source_id: s.sourceId, dest_id: destId, reason: "already_staged_or_present" });
           continue;
         }
+        writtenDestIds.add(destId); // claim it now so a later dup is skipped
         staged.push({ source: s, destId });
       }
 
@@ -179,6 +194,17 @@ function computeStatus(s: OperationSummary): OperationStatus {
 
 type Emit = (type: OperationEventType, payload: Record<string, unknown>) => void;
 
+/** The write batch size for a destination — must equal the per-HTTP-request
+ * size the client uses, because that request is the atomic unit. Chunking at
+ * this size in the runner means a chunk failure only re-touches the tracks in
+ * THAT chunk (each chunk = one request = all-or-nothing), so the per-track
+ * fallback can never re-add an already-committed chunk → no duplicates from a
+ * partial-batch failure. */
+function writeChunkSize(spec: OperationSpec): number {
+  if (spec.destination === "spotify") return spec.destinationTarget.kind === "liked" ? SPOTIFY_SAVE_BATCH : SPOTIFY_ADD_BATCH;
+  return APPLE_ADD_BATCH;
+}
+
 async function applyWrites(
   spec: OperationSpec,
   destPlaylistId: string | undefined,
@@ -189,18 +215,27 @@ async function applyWrites(
   writtenDestIds: Set<string>,
 ): Promise<void> {
   if (staged.length === 0) return;
-  try {
-    await deps.writeTracks(spec.destination, spec.destinationTarget, destPlaylistId, staged.map((x) => x.destId));
-    for (const x of staged) {
-      summary.written += 1;
-      writtenDestIds.add(x.destId);
-      emit("write", { source_id: x.source.sourceId, dest_id: x.destId });
-    }
-  } catch {
-    // Batch failed — retry one at a time so a single bad track doesn't sink
-    // the rest, and a 404 on a stale cached id can be auto-revalidated.
-    for (const x of staged) {
-      await writeOneWithRevalidation(spec, destPlaylistId, x, deps, emit, summary, writtenDestIds);
+  const chunkSize = writeChunkSize(spec);
+  // Sequential chunks (Apple append-only requires no concurrent adds, §6.1).
+  for (let i = 0; i < staged.length; i += chunkSize) {
+    const chunk = staged.slice(i, i + chunkSize);
+    try {
+      // One chunk = one client HTTP request (the client's batch cap matches
+      // chunkSize, so it makes exactly one call). Atomic: all land or none.
+      await deps.writeTracks(spec.destination, spec.destinationTarget, destPlaylistId, chunk.map((x) => x.destId));
+      for (const x of chunk) {
+        summary.written += 1;
+        writtenDestIds.add(x.destId);
+        emit("write", { source_id: x.source.sourceId, dest_id: x.destId });
+      }
+    } catch {
+      // This chunk's request failed (so none of it committed). Retry its
+      // tracks ONE at a time so a single bad track doesn't sink the rest, and
+      // a 404 on a stale cached id can be auto-revalidated. Prior chunks
+      // already succeeded and are never re-touched.
+      for (const x of chunk) {
+        await writeOneWithRevalidation(spec, destPlaylistId, x, deps, emit, summary, writtenDestIds);
+      }
     }
   }
 }

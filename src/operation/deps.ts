@@ -67,11 +67,23 @@ async function readSource(source: Platform, target: ResolvedTarget): Promise<Can
 async function readDestination(destination: Platform, target: ResolvedTarget): Promise<DestTrack[]> {
   if (target.kind === "create") return []; // brand-new playlist
   if (destination === "spotify") {
+    // Liked Songs is read directly via listSavedTracks — that IS the saved
+    // set, so the skip-if-present check is accurate.
     const tracks = target.kind === "playlist" ? await listPlaylistTracks(target.id) : await listSavedTracks();
     return tracks.map((t) => ({ canonical: spotifyToCanonical(t), destId: t.id }));
   }
-  const songs = target.kind === "playlist" ? await listLibraryPlaylistTracks(target.id) : await listLibrarySongs();
-  return songs.map((s) => ({ canonical: appleLibraryToCanonical(s), destId: appleLibraryCatalogId(s) ?? s.id }));
+  if (target.kind === "playlist") {
+    const songs = await listLibraryPlaylistTracks(target.id);
+    return songs.map((s) => ({ canonical: appleLibraryToCanonical(s), destId: appleLibraryCatalogId(s) ?? s.id }));
+  }
+  // Apple FAVORITES destination: Apple exposes no wired "favorited-songs" READ
+  // endpoint (§6.3), and the whole-library read (listLibrarySongs) is the WRONG
+  // skip set — a library song that isn't favorited would be wrongly skipped and
+  // never favorited. So we return an EMPTY D: every matched track is favorited.
+  // This is safe because favoriting is idempotent (re-favorite is a harmless
+  // no-op, §6.6), and same-tuple re-runs are still suppressed by the §12.5
+  // resume union (priorWrittenDestIds for the stable {kind:favorites} tuple).
+  return [];
 }
 
 async function createDestination(destination: Platform, name: string): Promise<string> {

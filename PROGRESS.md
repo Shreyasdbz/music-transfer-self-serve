@@ -1028,3 +1028,45 @@ Keep entries factual and terse.
   acceptance not yet live-probed (no favorites destination exercised this run) — will probe
   on first Apple-Favorites-destination use per §6.6.
 - Next: Phase 8 — UX polish (reconnect prompts, error legibility), then Phase 9 publish prep.
+
+### 2026-06-04 — Phase 7 validation sweep: 9 confirmed (1 crit, 3 high, 2 med, 3 low) → fixed
+
+- 5-persona validation (safety/additive-only, idempotency, correctness, resilience,
+  regression-arch) over the write-enabled Phase 7, adversarially verified. 12 raw →
+  **9 confirmed (1 critical, 3 high, 2 medium, 3 low)**. After dedup ≈5 unique. Crucially:
+  **every finding was "could append a DUPLICATE", never "could delete"** — the additive-only
+  invariant held; no destructive/removal/wrong-collection path was found. The personas
+  explicitly confirmed `writeTracks` only appends, `PUT /me/library` adds (not replace),
+  and `favoriteSongs` is one-way. Fixes:
+  - **In-run duplicate destId (HIGH ×3).** Two distinct source tracks (different identity
+    keys — e.g. single-master vs album-master ISRC of the same recording) could resolve to
+    the SAME destination id and both get written → duplicate playlist entry. `writtenDestIds`
+    was only mutated at write time, so the staging loop never deduped within a run. Fixed:
+    claim the destId in `writtenDestIds` at STAGE time; a later collision emits a
+    `skip{reason:"already_staged_or_present"}`. Test DUP-1 asserts the id is written once.
+  - **Partial-batch failure re-adds committed tracks (CRITICAL + HIGH).** `applyWrites`
+    wrote the WHOLE staged list in one `writeTracks` call, then on any error retried the
+    ENTIRE list per-track — so a batch that partially committed server-side before throwing
+    would re-add the committed tracks. Fixed: the runner now CHUNKS staged at the client's
+    per-request batch size (Spotify add 100 / save 40, Apple 100) and writes one chunk per
+    request (sequential — Apple append-only §6.1). A chunk = one atomic request; a chunk
+    failure only retries THAT chunk per-track, and prior chunks are never re-touched. Test
+    DUP-2 asserts no double-write after a batch failure.
+  - **Apple-Favorites skip set used the whole library (MEDIUM + LOW).** `readDestination`
+    for an Apple favorites destination read `listLibrarySongs` (the whole library), which
+    is the WRONG skip set — a library song that isn't favorited would be wrongly skipped
+    and never favorited. Apple exposes no wired favorites-READ endpoint (§6.3), so the fix
+    is to return an EMPTY D for favorites: favorite every matched track (favoriting is an
+    idempotent no-op, §6.6), and let the §12.5 resume union suppress same-tuple re-runs.
+  - **create-destination re-run left an empty orphan (LOW ×2).** A second `create` run made
+    a NEW playlist, then the resume union (matching the create tuple) skipped every write →
+    empty orphan playlist. Fixed: the resume union is no longer applied when
+    `destinationTarget.kind === "create"` — a brand-new playlist has no prior contents, and
+    the create tuple's prior writes belong to a different (now-orphaned) playlist. The
+    re-run now fills its new playlist (additive). Test DUP-3 asserts no over-skip.
+- Tests +8 (DUP-1/2/3 + favorites note). The happy-path Spotify→Apple playlist transfer
+  (<100 tracks → one chunk → one request) is byte-identical to the live-verified Phase 7
+  behavior, so no real-account re-write was needed. **Suite: 288/288 PASS** across 13
+  suites. Lint + build clean. No invariant weakened; the fixes strengthen duplication
+  safety (the project's explicit bar for write phases).
+- Next: Phase 8 — UX polish.

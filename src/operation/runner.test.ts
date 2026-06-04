@@ -205,4 +205,71 @@ function fakeDeps(opts: {
   __resetOperationDeps();
 }
 
+// ── DUP-1: two source tracks → same destId written ONCE (in-run dedup) ────
+{
+  const writes: string[][] = [];
+  // sp1 and sp2 are DIFFERENT recordings (different ISRC → different identity
+  // keys, so neither is skipped by dKeys) but both resolve to the SAME dest id.
+  __setOperationDeps(fakeDeps({ source: [srcTrack(1, "ISRC0001"), srcTrack(2, "ISRC0002")], matchMap: { sp1: "apSAME", sp2: "apSAME" }, writes }));
+  const h = startOperation(spec("DUP1 dest"));
+  await h.done;
+  const sum = JSON.parse(getOperation(h.id)!.summary!);
+  assert(writes.flat().filter((x) => x === "apSAME").length === 1, `DUP1: dest id written exactly once (got ${writes.flat()})`);
+  assert(sum.written === 1 && sum.skipped === 1, `DUP1: written 1, skipped 1 (got written=${sum.written} skipped=${sum.skipped})`);
+  const skipEvt = getOperationEvents(h.id).find((e) => e.type === "skip" && JSON.parse(e.payload ?? "{}").reason === "already_staged_or_present");
+  assert(skipEvt !== undefined, "DUP1: dedup skip event emitted");
+  __resetOperationDeps();
+}
+
+// ── DUP-2: partial-batch failure doesn't re-add a committed chunk ─────────
+// Chunk size for an Apple playlist dest is APPLE_ADD_BATCH (100). Force a
+// chunk boundary by stubbing writeChunkSize via many tracks isn't practical
+// here; instead verify the per-chunk semantics with a writeTracks that fails
+// the FIRST call (whole batch) then succeeds per-track — the runner must not
+// double-write the ones that the (failed) batch never committed. With chunking
+// at 100 and <100 staged, there is ONE chunk; its failure → per-track retry,
+// each track written exactly once.
+{
+  const writes: string[][] = [];
+  __setOperationDeps({
+    readSource: async () => [srcTrack(1, "ISRC0001"), srcTrack(2, "ISRC0002"), srcTrack(3, "ISRC0003")],
+    readDestination: async () => [],
+    createDestination: async () => "p.NEW",
+    match: async (s: CanonicalTrack) => matchTo({ sp1: "apA", sp2: "apB", sp3: "apC" }[s.sourceId]!, s.isrc ?? "X"),
+    deleteCache: () => {},
+    writeTracks: async (_d: unknown, _t: unknown, _p: string | undefined, ids: string[]) => {
+      if (ids.length > 1) throw new Error("batch boom"); // the whole-chunk call fails → per-track fallback
+      writes.push(ids); // per-track calls succeed
+    },
+  });
+  const h = startOperation(spec("DUP2 dest"));
+  await h.done;
+  const flat = writes.flat();
+  assert(flat.length === 3 && new Set(flat).size === 3, `DUP2: each track written exactly once after batch failure (got ${flat})`);
+  assert(JSON.parse(getOperation(h.id)!.summary!).written === 3, "DUP2: written=3, no duplicates");
+  __resetOperationDeps();
+}
+
+// ── DUP-3: create destination does NOT apply the resume union (no over-skip) ─
+// Seed a prior write event for a create tuple that maps to a dest id, then a
+// new create run with the SAME tuple must NOT skip that id (a new playlist has
+// no prior contents).
+{
+  const writes: string[][] = [];
+  // First run (create) writes apX.
+  __setOperationDeps(fakeDeps({ source: [srcTrack(9, "ISRC0009")], matchMap: { sp9: "apX" }, writes }));
+  const r1 = startOperation(spec("DUP3 dest"));
+  await r1.done;
+  assert(writes.flat().includes("apX"), "DUP3 setup: first create run wrote apX");
+  writes.length = 0;
+  // Second run, SAME create tuple — must re-write apX into the new playlist,
+  // NOT skip it via the resume union.
+  __setOperationDeps(fakeDeps({ source: [srcTrack(9, "ISRC0009")], matchMap: { sp9: "apX" }, writes }));
+  const r2 = startOperation(spec("DUP3 dest"));
+  await r2.done;
+  assert(writes.flat().includes("apX"), `DUP3: create re-run fills the new playlist (resume union not applied for create) — wrote ${writes.flat()}`);
+  assert(JSON.parse(getOperation(r2.id)!.summary!).written === 1, "DUP3: create re-run written=1 (no empty orphan)");
+  __resetOperationDeps();
+}
+
 process.exit(process.exitCode ?? 0);
