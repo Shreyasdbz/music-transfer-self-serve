@@ -1,10 +1,120 @@
-/* Phase 1+ will populate this. */
+/* Phase 2 minimal styling. Panels are loud-and-clear, not pretty — that's Phase 8. */
+:root {
+  color-scheme: light;
+  --bg: #fafafa;
+  --fg: #1a1a1a;
+  --muted: #666;
+  --border: #d0d0d0;
+  --accent: #1db954;
+  --warn: #b58900;
+}
+
+* {
+  box-sizing: border-box;
+}
+
 body {
   font-family:
     -apple-system,
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
-  margin: 2rem;
-  color: #111;
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+header {
+  padding: 1.5rem 2rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.subtitle {
+  color: var(--muted);
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+}
+
+main {
+  padding: 1.5rem 2rem;
+  display: grid;
+  gap: 1rem;
+  max-width: 56rem;
+}
+
+.panel {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+}
+
+.panel h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+.panel.placeholder {
+  color: var(--muted);
+  background: transparent;
+  border-style: dashed;
+}
+
+.auth-row {
+  display: grid;
+  grid-template-columns: 8rem 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.4rem 0;
+}
+
+.auth-label {
+  font-weight: 600;
+}
+
+.auth-status {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.auth-status[data-state="connected"] {
+  color: var(--accent);
+}
+
+.auth-status[data-state="error"] {
+  color: var(--warn);
+}
+
+button {
+  font: inherit;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--border);
+  background: white;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button:hover:not(:disabled) {
+  background: #f0f0f0;
+}
+
+.auth-message {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0.5rem 0 0;
+  min-height: 1.2em;
+}
+
+.auth-message[data-tone="error"] {
+  color: var(--warn);
 }

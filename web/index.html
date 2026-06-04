@@ -7,10 +7,43 @@
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
-    <main>
+    <header>
       <h1>music-transfer-self-serve</h1>
-      <p>UI placeholder. Phase 1 will wire the HTTP server and CSRF framework.</p>
+      <p class="subtitle">Local web tool · additive transfers · Spotify ⇄ Apple Music</p>
+    </header>
+
+    <main>
+      <section id="auth-panel" class="panel">
+        <h2>Auth status</h2>
+        <div class="auth-row">
+          <span class="auth-label">Spotify</span>
+          <span id="spotify-status" class="auth-status">…</span>
+          <button id="spotify-connect" type="button">Connect Spotify</button>
+        </div>
+        <div class="auth-row">
+          <span class="auth-label">Apple Music</span>
+          <span id="apple-status" class="auth-status">Phase 3</span>
+          <button id="apple-connect" type="button" disabled>Connect Apple Music</button>
+        </div>
+        <p id="auth-message" class="auth-message"></p>
+      </section>
+
+      <section class="panel placeholder">
+        <h2>Permissions</h2>
+        <p>Phase 5 wires the preflight checks.</p>
+      </section>
+
+      <section class="panel placeholder">
+        <h2>Catalog</h2>
+        <p>Phase 6 wires the catalog cache.</p>
+      </section>
+
+      <section class="panel placeholder">
+        <h2>Operation</h2>
+        <p>Phase 6 / 7 wires the form and runner.</p>
+      </section>
     </main>
+
     <script type="module" src="/app.js"></script>
   </body>
 </html>

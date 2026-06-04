@@ -10,6 +10,7 @@
   "scripts": {
     "build": "tsc --noEmit",
     "start": "tsx src/server.ts",
+    "test": "tsx src/auth/spotify.test.ts",
     "doctor": "tsx src/cli.ts doctor",
     "lint": "eslint .",
     "format": "prettier --write .",

@@ -266,3 +266,41 @@ Keep entries factual and terse.
   enforcing byte-equality of `SPOTIFY_REDIRECT_URI` across `.env.example`, the start-URL
   builder, and the callback route registration (Phase 2 AC #2). Then PAUSE at ⏸A with
   copy-pasteable Spotify Dashboard instructions; resume for ⏸B (consent in the UI).
+- Decisions:
+  - `util/http.ts` ships with the §12 backoff + Retry-After honor + jitter and a hook
+    point (`onUnauthorized`) for the Phase 5 refresh-aware auto-invalidation logic. Phase
+    2 itself never uses the hook (the auth-flow exchanges have no token yet to refresh).
+  - `auth/tokens.ts` writes atomically (temp + rename) at mode 0600 to avoid torn reads
+    if the process is killed mid-write. The schema is permissive — Spotify and Apple
+    each own a slice — so Phase 3 just adds an `apple` key alongside.
+  - `auth/spotify.ts`'s state store is in-memory only, per-server-start, with a 60s
+    sweeper that drops entries older than 10 min. The map's TTL check on lookup is the
+    primary defense; the sweeper just keeps memory bounded. `code_verifier` is 96 bytes
+    of randomness → 128 base64url chars, the high end of RFC 7636's allowed range.
+  - `clients/spotify.ts`'s pagination caps at 200 pages × 50 items = 10k items per
+    collection. A personal library that exceeds this should be the rare case; the cap is
+    a runaway-loop backstop rather than a real product constraint.
+  - `routes_auth.ts` keeps the callback `GET` route on the server's normal dispatcher;
+    Origin/CSRF middleware is POST-only, so the GET callback is correctly exempt by
+    construction (no special-case code path). The `handleCallback` function validates
+    `state` exactly the way blueprint §11.0 requires — unknown → 403 + body
+    `state_unknown`; expired (>10 min) → 403 + body `state_expired` AND entry purged.
+  - The Phase 2 AC #2 byte-equality test (`src/auth/spotify.test.ts`) reads
+    `.env.example` from disk, parses the redirect_uri out of `buildAuthorizeUrl()`'s URL,
+    greps the routes file for the literal `"/auth/spotify/callback"`, and compares all
+    three against `SPOTIFY_REDIRECT_URI_EXPECTED` from `config.ts`. Running `.env` is
+    intentionally NOT compared (a) because it's gitignored and may be empty in CI, and
+    (b) because the four "reference locations" the blueprint cites are really
+    `.env.example` (template), the expected constant, the start-URL, and the callback
+    route — the runtime `.env` is the user's value, which is enforced separately by
+    `loadConfig()` and the Phase 5 `env` preflight check. All five assertions pass.
+  - The Phase 2 AC #3 state-validation tests run inline alongside AC #2.
+  - UI auth panel is intentionally tiny: a single Connect Spotify button, a popup
+    watcher, and a 10s grace timer per blueprint §11.1's popup-failure UX. Apple is
+    rendered as a placeholder until Phase 3.
+- Result so far: AC #2 ✅ (5 assertions), AC #3 ✅ (3 assertions), live smoke against the
+  Phase 1 server: `/api/auth/status` returns `{spotify:{connected:false}, apple:{connected:false}}`;
+  `POST /api/auth/spotify/start` correctly fails with `Missing required env vars: …` (named,
+  actionable) until ⏸A is resolved; callback with unknown state → 403; callback with
+  missing state → 400. AC #1 (live Spotify connect) requires ⏸A + ⏸B and is what the
+  human is unblocking next.
