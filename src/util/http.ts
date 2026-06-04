@@ -19,8 +19,30 @@ export interface HttpRequest {
   readonly body?: string | URLSearchParams;
   /** Max retry attempts on 429/5xx. Default: 5. */
   readonly maxRetries?: number;
-  /** Hook for refresh-on-401. Phase 2 passes through; Phase 5 plugs in. */
+  /** Hook for refresh-on-401. Returns fresh auth headers to retry with, or
+   * undefined to give up. At most one refresh attempt per call. */
   readonly onUnauthorized?: () => Promise<Record<string, string> | undefined>;
+  /** When true, a persistent auth/scope failure on this request reports to the
+   * gate auto-invalidation sink (set by preflight/gate). Read/search calls
+   * that gate on a valid session opt in; OAuth-exchange calls do not. */
+  readonly reportAuthFailure?: boolean;
+}
+
+// ── Auto-invalidation sink (blueprint §11.1) ─────────────────────────────
+// preflight/gate installs this at startup so a persistent 401 (post-refresh)
+// or a scope-403 closes the gate. util/http stays ledger-free; the sink is
+// the one-way dependency edge.
+type AuthFailureTrigger = "auto-401" | "auto-403-scope";
+let authFailureSink: ((trigger: AuthFailureTrigger) => void) | undefined;
+export function setAuthFailureSink(fn: ((trigger: AuthFailureTrigger) => void) | undefined): void {
+  authFailureSink = fn;
+}
+// Body-classification mirrors preflight/gate.classifyAuthFailure; kept local so
+// util/http doesn't import the ledger layer. Both are covered by tests.
+function scope403(bodyText: string): boolean {
+  const body = bodyText.toLowerCase();
+  if (/rate.?limit|too many requests|quota exceeded/.test(body)) return false;
+  return /scope|insufficient|permission|not authorized|unauthorized|forbidden access|access token/.test(body);
 }
 
 export interface HttpResponse {
@@ -138,6 +160,21 @@ export async function httpRequest(req: HttpRequest): Promise<HttpResponse> {
       url: redactUrl(req.url),
       headers: redactHeaders(Object.fromEntries(response.headers)),
     });
+
+    // Refresh-aware auto-invalidation (§11.1). Only fires for opted-in calls:
+    //   - 401 that survived the one refresh+retry (triedRefresh true, or no
+    //     refresh hook was available) → persistent auth failure
+    //   - 403 whose body indicates a scope problem (not rate-limit)
+    // Transient 401s recovered by refresh never reach here with status 401
+    // (the `continue` retried them); 5xx are handled above and never invalidate.
+    if (req.reportAuthFailure && authFailureSink) {
+      if (response.status === 401 && (triedRefresh || !req.onUnauthorized)) {
+        authFailureSink("auto-401");
+      } else if (response.status === 403 && scope403(text)) {
+        authFailureSink("auto-403-scope");
+      }
+    }
+
     return { status: response.status, headers: response.headers, text };
   }
 

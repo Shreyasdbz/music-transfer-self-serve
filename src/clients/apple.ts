@@ -8,8 +8,8 @@
 // — see §5.2). The result is cached for the lifetime of the process so we don't
 // hit the endpoint on every catalog search; preflight re-resolves on each run.
 
-import { getLongLivedDevToken, getMut } from "../auth/apple.js";
-import { httpJson } from "../util/http.js";
+import { forceResignDevToken, getLongLivedDevToken, getMut } from "../auth/apple.js";
+import { httpJson, type HttpRequest } from "../util/http.js";
 
 const API = "https://api.music.apple.com";
 const MAX_PAGES = 200;
@@ -30,6 +30,23 @@ function devTokenHeaders(): Record<string, string> {
     Accept: "application/json",
   };
 }
+
+/** Auth-failure handling shared by all authed reads (§11.1): reactive
+ * dev-token re-sign on 401, and opt-in to the gate auto-invalidation sink.
+ * (A 401 is more often a stale MUT than a stale dev token, which re-signing
+ * can't fix — but the §11.1 contract is "one re-sign + retry", and if the
+ * retry still 401s the gate invalidates, which is the correct outcome.) */
+const AUTH_EXTRAS: Pick<HttpRequest, "onUnauthorized" | "reportAuthFailure"> = {
+  reportAuthFailure: true,
+  onUnauthorized: async () => {
+    try {
+      const token = forceResignDevToken();
+      return { Authorization: `Bearer ${token}` };
+    } catch {
+      return undefined;
+    }
+  },
+};
 
 // ── Storefront ────────────────────────────────────────────────────────────
 
@@ -64,6 +81,7 @@ export async function getStorefront(): Promise<string> {
     method: "GET",
     url: `${API}/v1/me/storefront`,
     headers: authedHeaders(),
+      ...AUTH_EXTRAS,
   });
   const id = r.data[0]?.id;
   if (!id) throw new Error("apple_storefront_unresolved");
@@ -99,6 +117,7 @@ async function paginate<T>(firstPath: string, headers: Record<string, string>): 
       method: "GET",
       url,
       headers,
+      ...AUTH_EXTRAS,
     });
     out.push(...page.data);
     nextPath = page.next ?? null;
@@ -109,6 +128,19 @@ async function paginate<T>(firstPath: string, headers: Record<string, string>): 
 
 export async function listLibraryPlaylists(): Promise<AppleLibraryPlaylist[]> {
   return paginate<AppleLibraryPlaylist>("/v1/me/library/playlists?limit=100", authedHeaders());
+}
+
+/** Single-page library playlists fetch (no pagination) — used by the Phase 5
+ * preflight `apple_library_read` check, which only needs to prove the call
+ * succeeds (§11.1: `GET /v1/me/library/playlists?limit=1`). */
+export async function headLibraryPlaylists(limit = 1): Promise<number> {
+  const r = await httpJson<{ data: AppleLibraryPlaylist[] }>({
+    method: "GET",
+    url: `${API}/v1/me/library/playlists?limit=${limit}`,
+    headers: authedHeaders(),
+      ...AUTH_EXTRAS,
+  });
+  return r.data.length;
 }
 
 // ── Library tracks (within a playlist) ────────────────────────────────────
@@ -238,6 +270,7 @@ export async function searchCatalog(query: string, limit = APPLE_SEARCH_MAX_LIMI
     method: "GET",
     url,
     headers: devTokenHeaders(),
+      ...AUTH_EXTRAS,
   });
   return r.results?.songs?.data ?? [];
 }
@@ -271,6 +304,7 @@ export async function getTopChartSongs(limit = 1): Promise<AppleCatalogSong[]> {
     method: "GET",
     url,
     headers: devTokenHeaders(),
+      ...AUTH_EXTRAS,
   });
   return r.results?.songs?.[0]?.data ?? [];
 }

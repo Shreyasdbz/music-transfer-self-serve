@@ -741,3 +741,81 @@ Keep entries factual and terse.
 - **Total suite: 190/190 PASS** across 7 suites (log 39, spotify 21, apple 24, http 10,
   ledger 18, trackscache 12, match 66). Lint clean. Build clean.
 - Phase 4 re-closed on a clean floor. Next: Phase 5 — Permissions preflight + gate.
+
+### 2026-06-04 — Phase 5: Permissions preflight + gating
+
+- Start: implement the 10-check preflight (env, Spotify ×4, Apple ×5) with the §11.1
+  ordering (env-first, Spotify+Apple groups in parallel, intra-group skip-on-auth-fail),
+  the §12 detail allow-lists, the gating policy (latest `passed` within 24h AND no
+  `invalidated` since → gate open; else 412 on `POST /api/catalog/refresh` +
+  `/api/operations`), refresh-aware auto-invalidation in `util/http.ts`, the
+  `/api/preflight/*` endpoints + SSE, the `doctor` CLI sharing the same runner
+  (`surface='cli'`), and the UI Permissions panel with the grouped live checklist +
+  gate-state-driven button enable/disable. No pause points.
+
+- Decisions:
+  - `ledger/preflightStore.ts` holds all preflight_runs/checks queries + the gate
+    computation. `computeGateState(nowMs)` is injectable for tests. Gate is OPEN iff a
+    `passed` run's finished_at is within 24h AND no `invalidated` row was inserted after
+    it — implemented as two indexed queries (latest passed, latest invalidated-after).
+    `insertPreflightRun` maps the `one_running_preflight` partial-unique-index violation
+    to a typed `PreflightRunningConflict` → route returns 409.
+  - `preflight/checks.ts` holds the 10 leaf checks + the §12 detail allow-lists, enforced
+    by `validateDetail` (throws on an extra key — a developer error caught in tests, never
+    a silent leak). `spotify_me` hashes user.id to SHA256[0:12]; `apple_dev_token` reports
+    alg/exp_days_remaining/signed but never iss/kid (= Team/Key ID). `apple_isrc_lookup`
+    sources its fixture from the storefront top chart (§11.1) and self-skips if the chart
+    has no ISRC. Failure details carry `error_message_safe` = redact(message).
+  - `preflight/runner.ts` orchestrates env-first → Spotify+Apple groups via `Promise.all`
+    → intra-group sequential with skip-on-gate-fail. seq is the fixed CHECKS position so
+    rows stay ordered despite parallel execution. Emits per-check + terminal `complete`
+    via an in-process EventEmitter registry for SSE. Final status: passed (0 fails) /
+    partial (some pass, some fail) / failed (no pass). A guard `finally` guarantees no
+    stranded `running` row.
+  - `preflight/gate.ts` exposes `getGateState`, `invalidateGate`, the pure
+    `classifyAuthFailure(status, body)`, and `installAuthFailureSink` which wires
+    `util/http.ts`'s sink to the gate (keeps util/http ledger-free — the dependency edge
+    points one way). util/http gained `reportAuthFailure` (opt-in) + `onUnauthorized`
+    (reactive refresh): after a failed refresh-retry a persistent 401 → `auto-401`; a
+    scope-403 (not rate-limit) → `auto-403-scope`; recovered 401s / 5xx never invalidate.
+    The Spotify + Apple clients opt in (`AUTH_EXTRAS`) with a force-refresh /
+    force-resign `onUnauthorized`.
+  - HTTP: the router gained `:param` matching. `routes_preflight.ts` serves
+    `/api/gate`, `/api/preflight/latest|run|:id|:id/events` (SSE with `id:`=seq +
+    `Last-Event-ID` replay-from-ledger), and the gated stubs `POST /api/catalog/refresh`
+    + `POST /api/operations` (412 when closed with the gate reason; 501 when open since
+    Phase 6/7 own the bodies).
+  - `cli.ts doctor` shares the runner (surface='cli'), waits for completion, then prints
+    a grouped checklist in seq order (streaming was abandoned for the CLI because the
+    parallel groups interleave; the UI groups by name so it's unaffected). Exit 0 only on
+    pass.
+  - Web: Permissions panel with Check permissions → POST run → EventSource over
+    `/api/preflight/:id/events` → live grouped checklist; gate banner + Catalog/Run
+    buttons enabled/disabled from `/api/gate`, polled on load, on focus, after a 412,
+    and after the SSE stream ends (§11.1).
+- Result: **all 6 Phase 5 AC verified.**
+  1. ✅ live `doctor`: all 10 checks pass (env / spotify ×4 / apple ×5), gate → OPEN,
+     gated POSTs return 501 (gate open, feature pending) not 412. SSE streams all 10
+     check events + `complete`.
+  2. ✅ live: dropped `user-library-modify` from tokens.json, ran preflight via the API
+     → `spotify_scopes` fails with `missing_scopes=[user-library-modify]` + "Re-Connect
+     Spotify to re-consent"; run status `partial`; gate stays closed.
+  3. ✅ unit (`runner.test.ts`): missing `APPLE_TEAM_ID` → env fails → all 9 downstream
+     `skip` with reason "prerequisite env failed"; final status `failed`.
+  4. ✅ live: backdated the passed run's finished_at to 30h ago → `/api/gate` closed with
+     "last pass was 26h ago (soft 24h expiry)"; `POST /api/catalog/refresh` → 412
+     `{error:'gate_closed', reason:'…soft 24h expiry…'}`.
+  5. ✅ unit (`gate.test.ts`, 17 assertions): classifier (401→auth, scope-403→scope,
+     rate-limit-403→none, 429/500→none) + the util/http sink (persistent 401→auto-401,
+     refresh-recovered 401→no invalidation, scope-403→auto-403-scope, rate-limit-403→none,
+     opt-out request→none, 5xx→none).
+  6. ✅ live: the `doctor` (surface='cli') pass is visible to `/api/gate` (open) and
+     `/api/preflight/latest` (surface=cli, 10 checks); the UI's Check permissions writes
+     an equivalent run — gate parity both directions. 409 returned when a second run
+     starts while one is in flight.
+- Tests added: `preflightStore.test.ts` (13), `gate.test.ts` (17), `runner.test.ts` (10).
+  **Total suite: 230/230 PASS** across 10 suites. Lint + build clean. Ledger restored
+  from a pre-test backup after the live AC#4 manual backdate; tokens untouched (6 scopes,
+  Apple connected).
+- Next: Phase 6 — Catalog cache + Operation form UI (the gated `POST /api/catalog/refresh`
+  stub becomes the real incremental refresh; the 501 flips to 200/SSE).

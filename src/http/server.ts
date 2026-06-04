@@ -21,15 +21,38 @@ export interface RouteContext {
   readonly res: ServerResponse;
   readonly url: URL;
   readonly csrfToken: string;
+  /** Path params captured from `:name` segments in the registered path. */
+  readonly params: Record<string, string>;
 }
 
 type Handler = (ctx: RouteContext) => void | Promise<void>;
 type Method = "GET" | "POST";
 
-const routes: { method: Method; path: string; handler: Handler }[] = [];
+interface CompiledRoute {
+  method: Method;
+  segments: string[]; // literal segment or ":name"
+  handler: Handler;
+}
+
+const routes: CompiledRoute[] = [];
 
 export function route(method: Method, path: string, handler: Handler): void {
-  routes.push({ method, path, handler });
+  routes.push({ method, segments: path.split("/").filter((s) => s.length > 0), handler });
+}
+
+/** Match a request pathname against a compiled route, returning captured
+ * params or undefined on no match. */
+function matchRoute(r: CompiledRoute, pathname: string): Record<string, string> | undefined {
+  const parts = pathname.split("/").filter((s) => s.length > 0);
+  if (parts.length !== r.segments.length) return undefined;
+  const params: Record<string, string> = {};
+  for (let i = 0; i < r.segments.length; i++) {
+    const seg = r.segments[i]!;
+    const part = parts[i]!;
+    if (seg.startsWith(":")) params[seg.slice(1)] = decodeURIComponent(part);
+    else if (seg !== part) return undefined;
+  }
+  return params;
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -187,11 +210,14 @@ export function startHttpServer(): Promise<ServerHandle> {
         }
       }
 
-      // 3) Route dispatch.
-      const match = routes.find((r) => r.method === method && r.path === url.pathname);
-      if (match) {
-        await match.handler({ req, res, url, csrfToken });
-        return;
+      // 3) Route dispatch (with `:param` support).
+      for (const r of routes) {
+        if (r.method !== method) continue;
+        const params = matchRoute(r, url.pathname);
+        if (params) {
+          await r.handler({ req, res, url, csrfToken, params });
+          return;
+        }
       }
 
       // 4) Static fallback (GET only).

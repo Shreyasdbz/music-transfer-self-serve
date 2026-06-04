@@ -1,0 +1,149 @@
+// Preflight HTTP routes (blueprint §11.2) + the gated stubs that enforce the
+// 412 precondition on Catalog refresh and Operations.
+//
+//   GET  /api/preflight/latest      latest run + checks (or null)
+//   POST /api/preflight/run         start a run → { id }; 409 if one running
+//   GET  /api/preflight/:id         a specific run + checks
+//   GET  /api/preflight/:id/events  SSE: per-check live + replay (Last-Event-ID)
+//   GET  /api/gate                  current gate state { open, reason }
+//   POST /api/catalog/refresh       gated stub → 412 when closed (Phase 6 fills in)
+//   POST /api/operations            gated stub → 412 when closed (Phase 7 fills in)
+
+import type { ServerResponse } from "node:http";
+import { route, sendJson, sendStatus } from "./server.js";
+import { runPreflight, subscribePreflight, type CheckEvent } from "../preflight/runner.js";
+import { getGateState } from "../preflight/gate.js";
+import {
+  getLatestPreflightRun,
+  getPreflightRun,
+  PreflightRunningConflict,
+} from "../ledger/preflightStore.js";
+import { log } from "../util/log.js";
+
+function sseInit(res: ServerResponse): void {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "X-Content-Type-Options": "nosniff",
+  });
+}
+
+function sseSend(res: ServerResponse, id: number | string, event: string, data: unknown): void {
+  res.write(`id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+export function registerPreflightRoutes(): void {
+  route("GET", "/api/gate", ({ res }) => {
+    sendJson(res, 200, getGateState());
+  });
+
+  route("GET", "/api/preflight/latest", ({ res }) => {
+    const run = getLatestPreflightRun();
+    sendJson(res, 200, run ?? null);
+  });
+
+  route("POST", "/api/preflight/run", ({ res }) => {
+    try {
+      const handle = runPreflight({ trigger: "manual", surface: "ui" });
+      // Fire-and-forget; the SSE stream and /latest reflect progress.
+      void handle.done.catch(() => undefined);
+      sendJson(res, 201, { id: handle.id });
+    } catch (err) {
+      if (err instanceof PreflightRunningConflict) {
+        sendStatus(res, 409, "preflight_already_running");
+        return;
+      }
+      log.error("preflight.run_route_failed", { message: (err as Error).message });
+      sendStatus(res, 500, "preflight_start_failed");
+    }
+  });
+
+  route("GET", "/api/preflight/:id", ({ res, params }) => {
+    const run = getPreflightRun(params["id"]!);
+    if (!run) {
+      sendStatus(res, 404, "preflight_run_not_found");
+      return;
+    }
+    sendJson(res, 200, run);
+  });
+
+  route("GET", "/api/preflight/:id/events", ({ req, res, params }) => {
+    const id = params["id"]!;
+    const run = getPreflightRun(id);
+    if (!run) {
+      sendStatus(res, 404, "preflight_run_not_found");
+      return;
+    }
+
+    const lastEventId = Number(req.headers["last-event-id"] ?? 0) || 0;
+    const sentSeqs = new Set<number>();
+
+    sseInit(res);
+
+    const emitter = subscribePreflight(id);
+    let closed = false;
+
+    const writeCheck = (evt: CheckEvent): void => {
+      if (closed || evt.seq <= lastEventId || sentSeqs.has(evt.seq)) return;
+      sentSeqs.add(evt.seq);
+      sseSend(res, evt.seq, "check", evt);
+    };
+    const complete = (payload: unknown): void => {
+      if (closed) return;
+      sseSend(res, "complete", "complete", payload);
+      closed = true;
+      res.end();
+    };
+
+    // Live subscription (if the run is still in flight).
+    if (emitter) {
+      emitter.on("check", writeCheck);
+      emitter.on("complete", complete);
+    }
+
+    // Replay any already-persisted checks (seq > Last-Event-ID). Synchronous
+    // (better-sqlite3) so no live event can interleave before this finishes.
+    const fresh = getPreflightRun(id);
+    for (const c of fresh?.checks ?? []) {
+      if (c.seq > lastEventId && !sentSeqs.has(c.seq)) {
+        sentSeqs.add(c.seq);
+        sseSend(res, c.seq, "check", {
+          seq: c.seq,
+          name: c.name,
+          status: c.status,
+          detail: c.detail ? JSON.parse(c.detail) : {},
+          duration_ms: c.duration_ms ?? 0,
+        });
+      }
+    }
+
+    // If the run already finished, emit the terminal event and close.
+    if (fresh && fresh.status !== "running") {
+      complete({ id, status: fresh.status, finished_at: fresh.finished_at });
+    }
+
+    req.on("close", () => {
+      closed = true;
+      if (emitter) {
+        emitter.off("check", writeCheck);
+        emitter.off("complete", complete);
+      }
+    });
+  });
+
+  // ── Gated stubs (Phase 6 / Phase 7 implement the bodies) ────────────────
+
+  const gatedStub = (res: ServerResponse, phaseLabel: string): void => {
+    const gate = getGateState();
+    if (!gate.open) {
+      sendJson(res, 412, { error: "gate_closed", reason: gate.reason });
+      return;
+    }
+    // Gate is open but the feature isn't built yet.
+    sendJson(res, 501, { error: "not_implemented", detail: `${phaseLabel} lands in a later phase` });
+  };
+
+  route("POST", "/api/catalog/refresh", ({ res }) => gatedStub(res, "Catalog refresh"));
+  route("POST", "/api/operations", ({ res }) => gatedStub(res, "Operations"));
+}

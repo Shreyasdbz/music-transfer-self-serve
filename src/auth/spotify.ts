@@ -242,6 +242,17 @@ export async function getAccessToken(): Promise<string> {
   return next.access_token;
 }
 
+/** Force a token refresh regardless of expiry — used by the reactive
+ * refresh-on-401 hook (§11.1). Returns the new access token, or throws if the
+ * stored refresh token is gone/revoked (caller then surfaces the 401, which
+ * triggers gate auto-invalidation). */
+export async function forceRefreshAccessToken(): Promise<string> {
+  const cur = readTokens().spotify;
+  if (!cur) throw new Error("spotify_not_connected");
+  const next = await refreshAccessToken(cur);
+  return next.access_token;
+}
+
 export function getConnectedState(): { connected: boolean; expires_at?: number; scope?: string } {
   const cur = readTokens().spotify;
   if (!cur) return { connected: false };

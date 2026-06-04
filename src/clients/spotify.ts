@@ -6,8 +6,8 @@
 // when present, capped at a high but finite limit (defense against runaway
 // loops on a buggy server response).
 
-import { getAccessToken } from "../auth/spotify.js";
-import { httpJson } from "../util/http.js";
+import { forceRefreshAccessToken, getAccessToken } from "../auth/spotify.js";
+import { httpJson, type HttpRequest } from "../util/http.js";
 
 const API = "https://api.spotify.com";
 const MAX_PAGES = 200; // 200 * 50 = 10 000 items max per collection — enough for a personal library
@@ -16,6 +16,21 @@ async function bearer(): Promise<Record<string, string>> {
   const token = await getAccessToken();
   return { Authorization: `Bearer ${token}`, Accept: "application/json" };
 }
+
+/** Auth-failure handling shared by all authed reads (§11.1): reactive
+ * refresh-on-401, and opt-in to the gate auto-invalidation sink. Spread into
+ * each httpJson call alongside `headers`. */
+const AUTH_EXTRAS: Pick<HttpRequest, "onUnauthorized" | "reportAuthFailure"> = {
+  reportAuthFailure: true,
+  onUnauthorized: async () => {
+    try {
+      const token = await forceRefreshAccessToken();
+      return { Authorization: `Bearer ${token}` };
+    } catch {
+      return undefined; // refresh failed → surface 401 → gate invalidates
+    }
+  },
+};
 
 export interface SpotifyProfile {
   readonly id: string;
@@ -28,6 +43,7 @@ export async function getMe(): Promise<SpotifyProfile> {
     method: "GET",
     url: `${API}/v1/me`,
     headers: await bearer(),
+    ...AUTH_EXTRAS,
   });
 }
 
@@ -60,7 +76,7 @@ async function paginate<T>(firstUrl: string): Promise<T[]> {
   let nextUrl: string | null = firstUrl;
   let pages = 0;
   while (nextUrl && pages < MAX_PAGES) {
-    const page: Page<T> = await httpJson<Page<T>>({ method: "GET", url: nextUrl, headers });
+    const page: Page<T> = await httpJson<Page<T>>({ method: "GET", url: nextUrl, headers, ...AUTH_EXTRAS });
     out.push(...page.items);
     nextUrl = page.next;
     pages++;
@@ -164,7 +180,7 @@ export function sanitizeSearchTerm(term: string): string {
  * Spotify's default — enough to disambiguate. */
 export async function searchTracksByIsrc(isrc: string): Promise<SpotifyTrack[]> {
   const url = `${API}/v1/search?q=${encodeURIComponent(`isrc:${isrc}`)}&type=track`;
-  const r = await httpJson<SearchResponse>({ method: "GET", url, headers: await bearer() });
+  const r = await httpJson<SearchResponse>({ method: "GET", url, headers: await bearer(), ...AUTH_EXTRAS });
   return r.tracks?.items ?? [];
 }
 
@@ -176,6 +192,6 @@ export async function searchTracks(term: string, limit = SPOTIFY_SEARCH_MAX_LIMI
   const safeTerm = sanitizeSearchTerm(term);
   if (safeTerm.length === 0) return [];
   const url = `${API}/v1/search?q=${encodeURIComponent(safeTerm)}&type=track&limit=${safeLimit}`;
-  const r = await httpJson<SearchResponse>({ method: "GET", url, headers: await bearer() });
+  const r = await httpJson<SearchResponse>({ method: "GET", url, headers: await bearer(), ...AUTH_EXTRAS });
   return r.tracks?.items ?? [];
 }

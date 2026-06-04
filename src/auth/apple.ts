@@ -176,6 +176,13 @@ export function mintPopupDevToken(): string {
   return signToken(SHORT_LIFE_SECONDS);
 }
 
+/** Force a fresh long-lived dev-token signature — used by the reactive
+ * re-sign-on-401 hook (§11.1). Drops the cache and re-signs from the .p8. */
+export function forceResignDevToken(): string {
+  longTokenCache = undefined;
+  return getLongLivedDevToken();
+}
+
 // ── Popup nonce lifecycle ──────────────────────────────────────────────────
 
 export interface PopupStart {

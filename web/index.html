@@ -28,19 +28,44 @@
         <p id="auth-message" class="auth-message"></p>
       </section>
 
-      <section class="panel placeholder">
+      <section id="permissions-panel" class="panel">
         <h2>Permissions</h2>
-        <p>Phase 5 wires the preflight checks.</p>
+        <div class="panel-actions">
+          <button id="check-permissions" type="button">Check permissions</button>
+          <span id="preflight-summary" class="muted"></span>
+        </div>
+        <div id="gate-banner" class="gate-banner" hidden></div>
+        <div id="preflight-groups">
+          <div class="check-group" data-group="env">
+            <h3>Environment</h3>
+            <ul></ul>
+          </div>
+          <div class="check-group" data-group="spotify">
+            <h3>Spotify</h3>
+            <ul></ul>
+          </div>
+          <div class="check-group" data-group="apple">
+            <h3>Apple</h3>
+            <ul></ul>
+          </div>
+        </div>
       </section>
 
-      <section class="panel placeholder">
+      <section id="catalog-panel" class="panel">
         <h2>Catalog</h2>
-        <p>Phase 6 wires the catalog cache.</p>
+        <div class="panel-actions">
+          <button id="update-catalog" type="button" disabled>Update Catalog</button>
+          <span id="catalog-status" class="muted"></span>
+        </div>
       </section>
 
-      <section class="panel placeholder">
+      <section id="operation-panel" class="panel">
         <h2>Operation</h2>
-        <p>Phase 6 / 7 wires the form and runner.</p>
+        <p class="muted">The Operation form lands in Phase 6 / 7.</p>
+        <div class="panel-actions">
+          <button id="run-operation" type="button" disabled>Run</button>
+          <span id="operation-status" class="muted"></span>
+        </div>
       </section>
     </main>
 
