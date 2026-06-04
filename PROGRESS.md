@@ -408,3 +408,17 @@ Keep entries factual and terse.
 - Test count: **21/21 PASS** (AC2 a–e ×8, AC3 a–b ×4, AC4 sweeper ×9 — and the AC2(d)
   `.env` SKIP path covered separately on a fresh clone).
 - **Phase 2 is now fully closed.** No deferred work that should have landed here.
+
+### 2026-06-04 — Phase 3: Apple Music auth + read
+
+- Start: implement `loadAppleConfig`, `src/auth/apple.ts` (ES256 JWT signing from the `.p8`,
+  long-lived 180-day server-side token cached + auto-regenerated within 7d of expiry per
+  §5.2, **short-lived 10-min token minted per popup** per §11.0, nonce store with 10-min
+  TTL + 60s sweeper), `src/clients/apple.ts` (storefront resolution, library playlists +
+  tracks, library songs, catalog search, ISRC lookup), `web/musickit.html` (popup loads
+  MusicKit JS v3, configures with short-lived token, calls `authorize()`, POSTs `{nonce,
+  mut}` to `/api/auth/apple/callback`), HTTP routes `POST /api/auth/apple/start` and
+  `POST /api/auth/apple/callback`, a Connect Apple Music UI button, AC #2 + AC #3 unit
+  tests. Then PAUSE at ⏸C (Apple Developer setup) with copy-pasteable instructions;
+  resume for ⏸D (UI consent) to verify AC #1 live. Apple delete-capability probe is
+  **deferred** per the 2026-06-03 amendment.

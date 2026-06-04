@@ -7,6 +7,7 @@ import { closeLedger, openLedger } from "./ledger/db.js";
 import { startHttpServer } from "./http/server.js";
 import { registerAuthRoutes } from "./http/routes_auth.js";
 import { stopStateSweeper } from "./auth/spotify.js";
+import { stopNonceSweeper } from "./auth/apple.js";
 import { log } from "./util/log.js";
 
 async function main(): Promise<void> {
@@ -17,6 +18,7 @@ async function main(): Promise<void> {
   const shutdown = (signal: string): void => {
     log.info("server.shutdown", { signal });
     stopStateSweeper();
+    stopNonceSweeper();
     void handle.close().finally(() => {
       closeLedger();
       process.exit(0);

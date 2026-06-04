@@ -6,6 +6,7 @@ const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
 const spotifyStatusEl = document.getElementById("spotify-status");
 const spotifyBtn = document.getElementById("spotify-connect");
 const appleStatusEl = document.getElementById("apple-status");
+const appleBtn = document.getElementById("apple-connect");
 const messageEl = document.getElementById("auth-message");
 
 function setMessage(text, tone = "info") {
@@ -42,9 +43,11 @@ function renderApple(a) {
   if (a.connected) {
     appleStatusEl.textContent = "connected";
     appleStatusEl.dataset.state = "connected";
+    appleBtn.textContent = "Reconnect Apple Music";
   } else {
-    appleStatusEl.textContent = "not connected (Phase 3)";
+    appleStatusEl.textContent = "not connected";
     appleStatusEl.dataset.state = "disconnected";
+    appleBtn.textContent = "Connect Apple Music";
   }
 }
 
@@ -103,6 +106,16 @@ async function connectSpotify() {
   }
 }
 
+async function connectApple() {
+  setMessage("Opening Apple Music authorization…");
+  // The popup loads /musickit.html, which itself POSTs /api/auth/apple/start
+  // for the short-lived dev token + nonce. We just have to open the popup;
+  // CSRF + Origin are enforced server-side inside that page's fetches.
+  const popup = window.open("/musickit.html", "apple-auth", "width=520,height=720");
+  watchPopup(popup);
+}
+
 spotifyBtn.addEventListener("click", connectSpotify);
+appleBtn.addEventListener("click", connectApple);
 window.addEventListener("focus", refreshAuthStatus);
 refreshAuthStatus();

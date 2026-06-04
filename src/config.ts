@@ -109,6 +109,36 @@ export interface SpotifyConfig {
   readonly spotifyRedirectUri: string;
 }
 
+export interface AppleConfig {
+  readonly appleTeamId: string;
+  readonly appleKeyId: string;
+  readonly applePrivateKeyPath: string;
+  readonly appleMusicKitAppName: string;
+}
+
+/** Apple-only slice — usable independent of Spotify state. */
+export function loadAppleConfig(): AppleConfig {
+  const missing: string[] = [];
+  for (const k of ["APPLE_TEAM_ID", "APPLE_KEY_ID", "APPLE_PRIVATE_KEY_PATH"] as const) {
+    if (!process.env[k]?.trim()) missing.push(k);
+  }
+  if (missing.length > 0) {
+    throw new Error(`Missing Apple env vars: ${missing.join(", ")} (see .env.example)`);
+  }
+  const keyPath = resolve(ROOT, process.env["APPLE_PRIVATE_KEY_PATH"]!);
+  try {
+    readFileSync(keyPath);
+  } catch {
+    throw new Error(`Apple private key at ${process.env["APPLE_PRIVATE_KEY_PATH"]} not readable`);
+  }
+  return {
+    appleTeamId: process.env["APPLE_TEAM_ID"]!,
+    appleKeyId: process.env["APPLE_KEY_ID"]!,
+    applePrivateKeyPath: keyPath,
+    appleMusicKitAppName: process.env["APPLE_MUSICKIT_APP_NAME"] ?? "music-transfer-self-serve",
+  };
+}
+
 /** Spotify-only slice — usable between ⏸B and ⏸C when Apple creds are absent. */
 export function loadSpotifyConfig(): SpotifyConfig {
   const missing: string[] = [];

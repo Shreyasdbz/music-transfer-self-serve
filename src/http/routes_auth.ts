@@ -1,23 +1,31 @@
 // Auth-related HTTP routes for Spotify (Phase 2) and Apple (Phase 3).
-// Phase 2 here: POST /api/auth/spotify/start, GET /auth/spotify/callback,
-// GET /api/auth/status.
+// Phase 2: POST /api/auth/spotify/start, GET /auth/spotify/callback.
+// Phase 3: POST /api/auth/apple/start, POST /api/auth/apple/callback.
+// Both phases: GET /api/auth/status.
 
-import { route, sendAutoCloseHtml, sendJson, sendStatus } from "./server.js";
+import { readJsonBody, route, sendAutoCloseHtml, sendJson, sendStatus } from "./server.js";
 import {
   buildAuthorizeUrl,
   getConnectedState as spotifyConnected,
   handleCallback,
   startStateSweeper,
 } from "../auth/spotify.js";
+import {
+  buildPopupStart as buildApplePopupStart,
+  getConnectedState as appleConnected,
+  handleCallback as handleAppleCallback,
+  startNonceSweeper,
+} from "../auth/apple.js";
 import { log } from "../util/log.js";
 
 export function registerAuthRoutes(): void {
   startStateSweeper();
+  startNonceSweeper();
 
   route("GET", "/api/auth/status", ({ res }) => {
     sendJson(res, 200, {
       spotify: spotifyConnected(),
-      apple: { connected: false }, // Phase 3 fills this in
+      apple: appleConnected(),
     });
   });
 
@@ -58,6 +66,47 @@ export function registerAuthRoutes(): void {
         return;
       case "exchange_failed":
         sendStatus(res, 502, `spotify_exchange_failed_${result.status}`);
+        return;
+    }
+  });
+
+  route("POST", "/api/auth/apple/start", ({ res }) => {
+    try {
+      const start = buildApplePopupStart();
+      sendJson(res, 200, start);
+    } catch (err) {
+      const message = (err as Error).message;
+      log.warn("auth.apple_start_failed", { message });
+      sendStatus(res, 500, message);
+    }
+  });
+
+  route("POST", "/api/auth/apple/callback", async ({ req, res }) => {
+    let body: { nonce?: string; mut?: string };
+    try {
+      body = await readJsonBody(req);
+    } catch {
+      sendStatus(res, 400, "invalid_json");
+      return;
+    }
+    const nonce = body.nonce ?? "";
+    const mut = body.mut ?? "";
+    if (!nonce) {
+      sendStatus(res, 400, "missing_nonce");
+      return;
+    }
+    const result = handleAppleCallback(nonce, mut);
+    switch (result.kind) {
+      case "ok":
+        log.info("auth.apple_connected");
+        sendJson(res, 200, { ok: true });
+        return;
+      case "nonce_unknown":
+      case "nonce_expired":
+        sendStatus(res, 403, result.kind);
+        return;
+      case "mut_missing":
+        sendStatus(res, 400, result.kind);
         return;
     }
   });

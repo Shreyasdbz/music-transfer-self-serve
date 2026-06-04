@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Connect Apple Music</title>
+    <link rel="stylesheet" href="/app.css" />
+    <!-- MusicKit JS v3 — loaded from Apple's CDN. The dev token configured below
+         is short-lived (10 min) per blueprint §11.0; the long-lived 180-day
+         token never leaves the server. -->
+    <script src="https://js-cdn.music.apple.com/musickit/v3/musickit.js" async></script>
+  </head>
+  <body>
+    <main style="max-width: 28rem; margin: 2rem auto; font-family: -apple-system, sans-serif">
+      <h1>Connect Apple Music</h1>
+      <p id="status">Loading MusicKit…</p>
+      <button id="authorize" type="button" disabled>Authorize</button>
+      <p id="message" style="color: #b58900"></p>
+    </main>
+    <script type="module">
+      const statusEl = document.getElementById("status");
+      const msgEl = document.getElementById("message");
+      const btn = document.getElementById("authorize");
+
+      function setStatus(text) {
+        statusEl.textContent = text;
+      }
+      function setError(text) {
+        msgEl.textContent = text;
+      }
+
+      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
+      if (!csrfToken) {
+        setError("CSRF token missing — refresh the parent window and try again.");
+      }
+
+      // Pull the short-lived dev token + nonce from the server. We POST (not
+      // GET) so the §11.0 Origin + CSRF middleware applies.
+      let developerToken, nonce, appName;
+      try {
+        const r = await fetch("/api/auth/apple/start", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": csrfToken ?? "",
+          },
+        });
+        if (!r.ok) {
+          const body = await r.text();
+          throw new Error(`server returned ${r.status}: ${body}`);
+        }
+        const j = await r.json();
+        developerToken = j.developerToken;
+        nonce = j.nonce;
+        appName = j.appName;
+      } catch (err) {
+        setError(`Could not get developer token: ${err.message}`);
+        setStatus("Failed");
+        throw err;
+      }
+
+      // Wait for MusicKit JS to load.
+      function waitForMusicKit() {
+        return new Promise((resolve) => {
+          if (window.MusicKit) return resolve();
+          document.addEventListener("musickitloaded", () => resolve(), { once: true });
+        });
+      }
+      await waitForMusicKit();
+
+      try {
+        await window.MusicKit.configure({
+          developerToken,
+          app: { name: appName ?? "music-transfer-self-serve", build: "0.1.0" },
+        });
+        setStatus("Ready. Click Authorize.");
+        btn.disabled = false;
+      } catch (err) {
+        setError(`MusicKit.configure failed: ${err.message}`);
+        setStatus("Failed");
+        throw err;
+      }
+
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        setStatus("Waiting for Apple Music authorization…");
+        try {
+          const music = window.MusicKit.getInstance();
+          const mut = await music.authorize();
+          if (!mut) throw new Error("authorize() returned an empty Music-User-Token");
+
+          const r = await fetch("/api/auth/apple/callback", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRF-Token": csrfToken ?? "",
+            },
+            body: JSON.stringify({ nonce, mut }),
+          });
+          if (!r.ok) {
+            const body = await r.text();
+            throw new Error(`callback returned ${r.status}: ${body}`);
+          }
+          setStatus("Apple Music connected. You can close this window.");
+          setTimeout(() => {
+            try {
+              window.close();
+            } catch (_) {
+              /* no-op */
+            }
+          }, 400);
+        } catch (err) {
+          setError(`Authorize failed: ${err.message}`);
+          setStatus("Failed");
+          btn.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>
