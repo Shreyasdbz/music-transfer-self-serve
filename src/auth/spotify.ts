@@ -12,7 +12,7 @@
 //     60s sweep.
 
 import { createHash, randomBytes } from "node:crypto";
-import { loadSpotifyConfig, SPOTIFY_REDIRECT_URI_EXPECTED } from "../config.js";
+import { loadSpotifyConfig } from "../config.js";
 import { httpJson } from "../util/http.js";
 import { log } from "../util/log.js";
 import {
@@ -33,6 +33,11 @@ export const REQUIRED_SPOTIFY_SCOPES = [
 const STATE_TTL_MS = 10 * 60 * 1000;
 const SWEEP_INTERVAL_MS = 60 * 1000;
 const REFRESH_LEEWAY_MS = 60 * 1000;
+// Defensive bound on the in-memory state store. Even a misbehaving / abusive
+// caller hitting `POST /api/auth/spotify/start` shouldn't be able to OOM the
+// server before the next 60s sweep runs. 10k entries × ~200 bytes = ~2 MB
+// worst-case footprint, an order of magnitude under any sensible budget.
+const STATE_STORE_MAX = 10_000;
 
 interface StateEntry {
   code_verifier: string;
@@ -94,6 +99,18 @@ export function buildAuthorizeUrl(): AuthorizeStart {
   const code_verifier = genVerifier();
   const code_challenge = challenge(code_verifier);
 
+  // Hard cap: if we ever exceed STATE_STORE_MAX, eagerly sweep + drop the
+  // oldest entries. Insertion order in a Map is iteration order, so the
+  // first N entries are also the oldest.
+  if (stateStore.size >= STATE_STORE_MAX) {
+    sweepExpiredStates();
+    while (stateStore.size >= STATE_STORE_MAX) {
+      const oldest = stateStore.keys().next().value;
+      if (!oldest) break;
+      stateStore.delete(oldest);
+    }
+    log.warn("spotify.state_store_pressure_evicted", { size: stateStore.size });
+  }
   stateStore.set(state, { code_verifier, created_at: Date.now() });
 
   const params = new URLSearchParams({
@@ -170,7 +187,7 @@ function persistTokens(tok: TokenResponse): void {
   updateSpotifyTokens(stored);
 }
 
-async function refreshAccessToken(current: SpotifyTokens): Promise<SpotifyTokens> {
+async function doRefresh(current: SpotifyTokens): Promise<SpotifyTokens> {
   const cfg = loadSpotifyConfig();
   const body = new URLSearchParams({
     grant_type: "refresh_token",
@@ -195,6 +212,23 @@ async function refreshAccessToken(current: SpotifyTokens): Promise<SpotifyTokens
   };
   updateSpotifyTokens(next);
   return next;
+}
+
+// Single in-flight refresh promise — coalesces concurrent expirations into
+// one upstream POST. Without this, parallel callers (Phase 4 matcher fans
+// out many catalog reads) each enter refresh with the same refresh_token;
+// Spotify rotates refresh tokens on use, so the losers retry with the
+// invalidated old refresh token and may write it back over the rotated one
+// in tokens.json. The promise is cleared in .finally so the NEXT expiration
+// triggers a fresh refresh.
+let refreshInFlight: Promise<SpotifyTokens> | undefined;
+
+async function refreshAccessToken(current: SpotifyTokens): Promise<SpotifyTokens> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = doRefresh(current).finally(() => {
+    refreshInFlight = undefined;
+  });
+  return refreshInFlight;
 }
 
 /** Returns a non-expired Spotify access token, refreshing if needed. Throws

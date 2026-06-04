@@ -71,20 +71,36 @@ function csrfOk(req: IncomingMessage, expected: string): boolean {
 // uploads. Local-only server, single user, no big bodies expected.
 const BODY_BYTE_LIMIT = 1 << 20; // 1 MiB
 
+/** Thrown on body-size overrun so the request handler can map to a 413
+ * response. Other errors bubble as 500 via the global try/catch. */
+export class BodyTooLargeError extends Error {
+  constructor() {
+    super("body_too_large");
+    this.name = "BodyTooLargeError";
+  }
+}
+
 export async function readBody(req: IncomingMessage): Promise<Buffer> {
   return new Promise<Buffer>((resolvePromise, rejectPromise) => {
     const chunks: Buffer[] = [];
     let total = 0;
+    let overrun = false;
     req.on("data", (chunk: Buffer) => {
+      if (overrun) return; // already past the cap; drop remaining chunks
       total += chunk.length;
       if (total > BODY_BYTE_LIMIT) {
-        rejectPromise(new Error("body_too_large"));
-        req.destroy();
+        overrun = true;
         return;
       }
       chunks.push(chunk);
     });
-    req.on("end", () => resolvePromise(Buffer.concat(chunks)));
+    req.on("end", () => {
+      // Wait for the full request body before signalling the failure — this
+      // lets the response 413 propagate cleanly instead of the socket being
+      // torn down mid-upload (which surfaces as ECONNRESET on the client).
+      if (overrun) rejectPromise(new BodyTooLargeError());
+      else resolvePromise(Buffer.concat(chunks));
+    });
     req.on("error", rejectPromise);
   });
 }
@@ -95,19 +111,42 @@ export async function readJsonBody<T = unknown>(req: IncomingMessage): Promise<T
   return JSON.parse(buf.toString("utf8")) as T;
 }
 
+/** HTML-escape the five characters that matter for attribute / text contexts.
+ * Used by {@link sendAutoCloseHtml} so callers can't accidentally inject
+ * markup through the `message` parameter. */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 /** Serve a tiny HTML page that closes its own window — used by both OAuth
- * callbacks. Body is wrapped in HTML; redact() doesn't need to touch the
- * surrounding markup since it's hardcoded. */
+ * callbacks. `message` is HTML-escaped; callers should pass FIXED strings
+ * (never user-controlled query params — log those server-side instead).
+ *
+ * Defense-in-depth: a strict CSP blocks any external script load and limits
+ * inline JS to the small bootstrap below. The Spotify OAuth `error` query
+ * param was previously echoed here unescaped, which gave any cross-origin
+ * `<a href="http://127.0.0.1:8888/auth/spotify/callback?error=<script>…">`
+ * top-level navigation a path to script execution inside the trusted local
+ * origin. Now: escape + don't echo. */
 export function sendAutoCloseHtml(res: ServerResponse, message: string): void {
-  const html = `<!doctype html><meta charset="utf-8"><title>${message}</title>
+  const safe = escapeHtml(message);
+  const html = `<!doctype html><meta charset="utf-8"><title>${safe}</title>
 <style>body{font-family:-apple-system,sans-serif;padding:2rem;color:#222}</style>
-<p>${message}</p><p>You can close this window.</p>
+<p>${safe}</p><p>You can close this window.</p>
 <script>setTimeout(()=>{try{window.close()}catch(_){}}, 250);</script>`;
   res.writeHead(200, {
     "Content-Type": "text/html; charset=utf-8",
     "Content-Length": Buffer.byteLength(html),
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy":
+      "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
   });
   res.end(html);
 }
@@ -160,6 +199,11 @@ export function startHttpServer(): Promise<ServerHandle> {
 
       sendStatus(res, 404, "not_found");
     } catch (err) {
+      if (err instanceof BodyTooLargeError) {
+        if (!res.headersSent) sendStatus(res, 413, "body_too_large");
+        else res.end();
+        return;
+      }
       log.error("http.unhandled_error", { message: (err as Error).message });
       if (!res.headersSent) sendStatus(res, 500, "internal_error");
       else res.end();

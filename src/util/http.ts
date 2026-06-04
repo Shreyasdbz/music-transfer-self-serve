@@ -10,7 +10,7 @@
 // Phase 5+ adds the refresh-on-401 retry hook used by the preflight gate's
 // auto-invalidation logic — Phase 2 leaves that as a passthrough.
 
-import { log, redactHeaders } from "./log.js";
+import { log, redact, redactHeaders, redactUrl } from "./log.js";
 
 export interface HttpRequest {
   readonly method: "GET" | "POST" | "PUT" | "DELETE";
@@ -53,12 +53,22 @@ function backoffMs(attempt: number): number {
 
 export class HttpError extends Error {
   readonly status: number;
-  readonly bodySafe: string;
-  constructor(status: number, bodySafe: string, url: string) {
-    super(`HTTP ${status} from ${url}: ${bodySafe.slice(0, 200)}`);
+  /** Raw upstream response body, redacted through util/log so it's safe to
+   * embed in error messages and structured logs. Named without a "safe"
+   * suffix — the suffix was misleading because the previous version stored
+   * the raw bytes unmodified. */
+  readonly body: string;
+  /** True when the failure was network-level (DNS, ECONNREFUSED, retry pool
+   * exhausted) rather than a real HTTP response. Distinguishes from a real
+   * `0` status code so callers can branch on retryability. */
+  readonly isNetworkError: boolean;
+  constructor(status: number, body: string, url: string, isNetworkError = false) {
+    const redactedBody = String(redact(body) ?? "");
+    super(`HTTP ${status} from ${redactUrl(url)}: ${redactedBody.slice(0, 200)}`);
     this.name = "HttpError";
     this.status = status;
-    this.bodySafe = bodySafe;
+    this.body = redactedBody;
+    this.isNetworkError = isNetworkError;
   }
 }
 
@@ -86,7 +96,7 @@ export async function httpRequest(req: HttpRequest): Promise<HttpResponse> {
       log.warn("http.network_error", {
         attempt,
         wait_ms: wait,
-        url: req.url,
+        url: redactUrl(req.url),
         message: (err as Error).message,
       });
       await sleep(wait);
@@ -115,7 +125,7 @@ export async function httpRequest(req: HttpRequest): Promise<HttpResponse> {
         status: response.status,
         attempt,
         wait_ms: wait,
-        url: req.url,
+        url: redactUrl(req.url),
       });
       await sleep(wait);
       attempt++;
@@ -125,13 +135,13 @@ export async function httpRequest(req: HttpRequest): Promise<HttpResponse> {
     const text = await response.text();
     log.debug("http.response", {
       status: response.status,
-      url: req.url,
+      url: redactUrl(req.url),
       headers: redactHeaders(Object.fromEntries(response.headers)),
     });
     return { status: response.status, headers: response.headers, text };
   }
 
-  throw new HttpError(0, String((lastErr as Error)?.message ?? "unknown"), req.url);
+  throw new HttpError(0, String((lastErr as Error)?.message ?? "unknown"), req.url, true);
 }
 
 export async function httpJson<T>(req: HttpRequest): Promise<T> {

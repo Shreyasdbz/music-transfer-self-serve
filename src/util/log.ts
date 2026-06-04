@@ -29,12 +29,18 @@ const REDACTED_BODY_KEYS = new Set([
   "developer_token",
   "musicusertoken",
   "music_user_token",
+  "mut", // wire JSON key actually used by web/musickit.html → /api/auth/apple/callback
   "id_token",
   "code_verifier",
   "state",
   "nonce",
   "code",
 ]);
+
+// Used by {@link redactUrl} to scrub secrets out of query strings. Per
+// blueprint §12, query-string parameters with any of the above body-key names
+// must also be redacted before any string reaches stdout/stderr/SSE.
+const REDACTED_QUERY_PARAMS = REDACTED_BODY_KEYS;
 
 const BEARER_RE = /Bearer\s+[A-Za-z0-9._~+/=-]{40,}/g;
 const PRIVATE_KEY_RE = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g;
@@ -50,6 +56,29 @@ function redactString(s: string): string {
   if (TEAM_ID.length >= 6) out = out.split(TEAM_ID).join("<redacted:team-id>");
   if (KEY_ID.length >= 6) out = out.split(KEY_ID).join("<redacted:key-id>");
   return out;
+}
+
+/** Redact sensitive query-string parameters from a URL without losing the
+ * shape of the URL — useful for logging request URLs without leaking the
+ * Spotify OAuth `code` + `state`, refresh tokens, MUTs, etc.
+ *
+ * Non-URL inputs (relative paths, malformed URLs) are returned with
+ * `redactString` applied so we still scrub bearer / key patterns. */
+export function redactUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return redactString(url);
+  }
+  let mutated = false;
+  for (const [key] of parsed.searchParams) {
+    if (REDACTED_QUERY_PARAMS.has(key.toLowerCase())) {
+      parsed.searchParams.set(key, "<redacted:secret>");
+      mutated = true;
+    }
+  }
+  return mutated ? redactString(parsed.toString()) : redactString(url);
 }
 
 export function redactHeaders(headers: Record<string, string | string[] | undefined>): Record<string, string> {

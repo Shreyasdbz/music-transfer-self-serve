@@ -7,20 +7,32 @@
 // AC #4: nonce sweeper purges expired entries, retains fresh ones (mirror
 //        of the Spotify AC #4 we landed during the Phase 2 close-out).
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import jwt from "jsonwebtoken";
 
 // IMPORTANT: snapshot data/tokens.json BEFORE importing apple.ts. The AC #3(d)
 // flow exercises handleCallback("fresh-nonce", "test-mut-value"), which writes
-// the fake MUT to the real tokens file. We restore the snapshot at exit so a
-// test run never leaves the user appearing "connected" with a junk MUT.
+// the fake MUT to the real tokens file. We restore the FILE STATE (present vs
+// absent) at exit so a test run never leaves the user appearing "connected"
+// with a junk MUT — including on a fresh clone where tokens.json didn't
+// exist before the test ran.
 const TOKENS_PATH = resolve(import.meta.dirname, "..", "..", "data", "tokens.json");
 const _hadTokensFile = existsSync(TOKENS_PATH);
 const _tokensSnapshot = _hadTokensFile ? readFileSync(TOKENS_PATH, "utf8") : null;
 function restoreTokens(): void {
   if (_tokensSnapshot !== null) {
+    // File existed before — restore its content.
     writeFileSync(TOKENS_PATH, _tokensSnapshot, { mode: 0o600 });
+  } else if (existsSync(TOKENS_PATH)) {
+    // File did NOT exist before, but the test wrote one — remove it so the
+    // user isn't left with a junk MUT on disk (the original bug this guard
+    // fixed had a hole for exactly this case).
+    try {
+      unlinkSync(TOKENS_PATH);
+    } catch {
+      // best-effort
+    }
   }
 }
 process.on("exit", restoreTokens);

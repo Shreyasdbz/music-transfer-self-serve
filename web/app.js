@@ -1,7 +1,15 @@
 // Phase 2 UI: auth panel only. Phase 3+ adds Apple, preflight, catalog, run panels.
 // Vanilla JS, no framework, no bundler.
 
-const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+// Read the CSRF token defensively — if the static handler's <meta> injection
+// regressed (e.g. someone touches static.ts again), don't kill the whole
+// script with a TypeError. The fetch helpers will then send no token and the
+// server will reject with 403, which is the right failure mode for that bug.
+const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+const csrfToken = csrfMeta ? csrfMeta.content : "";
+if (!csrfToken) {
+  console.error("CSRF token missing from HTML — refresh, and if the problem persists, check /static.ts injection.");
+}
 
 const spotifyStatusEl = document.getElementById("spotify-status");
 const spotifyBtn = document.getElementById("spotify-connect");

@@ -3,7 +3,7 @@
 // Phase 3: POST /api/auth/apple/start, POST /api/auth/apple/callback.
 // Both phases: GET /api/auth/status.
 
-import { readJsonBody, route, sendAutoCloseHtml, sendJson, sendStatus } from "./server.js";
+import { BodyTooLargeError, readJsonBody, route, sendAutoCloseHtml, sendJson, sendStatus } from "./server.js";
 import {
   buildAuthorizeUrl,
   getConnectedState as spotifyConnected,
@@ -46,8 +46,12 @@ export function registerAuthRoutes(): void {
     const errParam = url.searchParams.get("error");
 
     if (errParam) {
+      // Log the raw error server-side, but NEVER echo it into the HTML
+      // response — `error` is attacker-controllable via a top-level GET
+      // navigation, and the callback HTML runs in the trusted local origin.
+      // The redacting logger handles raw error strings safely.
       log.warn("auth.spotify_callback_user_error", { error: errParam });
-      sendAutoCloseHtml(res, `Spotify authorization cancelled: ${errParam}`);
+      sendAutoCloseHtml(res, "Spotify authorization cancelled.");
       return;
     }
     if (!state || !code) {
@@ -85,7 +89,10 @@ export function registerAuthRoutes(): void {
     let body: { nonce?: string; mut?: string };
     try {
       body = await readJsonBody(req);
-    } catch {
+    } catch (err) {
+      // Let oversize bodies bubble to the global 413 path; only JSON parse
+      // errors become 400 here.
+      if (err instanceof BodyTooLargeError) throw err;
       sendStatus(res, 400, "invalid_json");
       return;
     }

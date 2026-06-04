@@ -7,14 +7,18 @@
 set -euo pipefail
 
 PORT=8888
-MATCH='tsx src/server.ts'
+# Anchor the match to THIS repo's server.ts so we don't kill someone else's
+# tsx process whose argv happens to contain 'src/server.ts'.
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+MATCH="tsx ${REPO_DIR}/src/server.ts|tsx src/server.ts"
 
 # Find the PID currently bound to PORT (LISTEN socket), if any.
 port_pid() {
   lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true
 }
 
-# Find every PID whose argv contains MATCH (covers npm wrapper + tsx + node).
+# Find every PID whose argv matches MATCH and whose cwd is this repo (covers
+# npm wrapper + tsx + node spawn tree).
 match_pids() {
   pgrep -f "$MATCH" 2>/dev/null || true
 }

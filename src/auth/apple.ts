@@ -25,6 +25,8 @@ const LONG_LIFE_REFRESH_THRESHOLD_DAYS = 7;
 const SHORT_LIFE_SECONDS = 600; // 10 minutes
 const NONCE_TTL_MS = 10 * 60 * 1000;
 const NONCE_SWEEP_INTERVAL_MS = 60 * 1000;
+// Same defensive bound rationale as Spotify's state store (auth/spotify.ts).
+const NONCE_STORE_MAX = 10_000;
 
 interface NonceEntry {
   created_at: number;
@@ -63,10 +65,17 @@ export function stopNonceSweeper(): void {
 
 // ── Private key loading ────────────────────────────────────────────────────
 
-let cachedPrivateKey: string | undefined;
+// Cache keyed on the .p8 file's path + mtime so an in-place key rotation
+// (user replaces the .p8 with a new key from the Apple Developer dashboard)
+// is picked up on the next call without a server restart. The path part of
+// the key also invalidates if APPLE_PRIVATE_KEY_PATH changes mid-process.
+interface PrivateKeyCache {
+  key: string;
+  cacheKey: string;
+}
+let cachedPrivateKey: PrivateKeyCache | undefined;
 
 function loadPrivateKey(): string {
-  if (cachedPrivateKey) return cachedPrivateKey;
   const cfg = loadAppleConfig();
   // Enforce 0700 on secrets/ + 0600 on the .p8 per §12 ("Apple's downloaded
   // .p8 is 0644 by default; chmod 0600 it on first read, or refuse to run if
@@ -78,19 +87,27 @@ function loadPrivateKey(): string {
       try {
         chmodSync(secretsDir, 0o700);
         log.info("apple.secrets_dir_perms_tightened");
-      } catch {
-        // Non-fatal — the .p8 itself is the load-bearing perm.
+      } catch (err) {
+        // The .p8 itself is the load-bearing perm, so don't throw. But do
+        // surface the failure clearly — a group/world-readable secrets/ dir
+        // is a §12 invariant violation worth flagging in logs.
+        log.warn("apple.secrets_dir_chmod_failed", {
+          path: secretsDir,
+          message: (err as Error).message,
+        });
       }
     }
   } catch {
     // statSync may fail on non-POSIX FS; the read below is what really matters.
   }
+  let stat: ReturnType<typeof statSync> | undefined;
   try {
-    const st = statSync(cfg.applePrivateKeyPath);
-    if ((st.mode & 0o077) !== 0) {
+    stat = statSync(cfg.applePrivateKeyPath);
+    if ((stat.mode & 0o077) !== 0) {
       try {
         chmodSync(cfg.applePrivateKeyPath, 0o600);
         log.info("apple.private_key_perms_tightened");
+        stat = statSync(cfg.applePrivateKeyPath); // re-stat for the cache key
       } catch (err) {
         throw new Error(
           `Apple .p8 at ${cfg.applePrivateKeyPath} is group/world-readable and chmod 0600 failed: ${(err as Error).message}`,
@@ -101,8 +118,20 @@ function loadPrivateKey(): string {
     if (!(err as { code?: string }).code) throw err;
     // statSync failure already raised in loadAppleConfig — re-fall through.
   }
-  cachedPrivateKey = readFileSync(cfg.applePrivateKeyPath, "utf8");
-  return cachedPrivateKey;
+
+  // Cache key combines path + mtimeMs (millisecond precision is plenty for
+  // detecting a manual key rotation). Rotating the .p8 in place changes
+  // mtimeMs → cache miss → fresh read.
+  const cacheKey = `${cfg.applePrivateKeyPath}@${stat?.mtimeMs ?? 0}`;
+  if (cachedPrivateKey && cachedPrivateKey.cacheKey === cacheKey) {
+    return cachedPrivateKey.key;
+  }
+  const key = readFileSync(cfg.applePrivateKeyPath, "utf8");
+  cachedPrivateKey = { key, cacheKey };
+  // Also invalidate the long-lived dev token cache so the next call signs
+  // with the new key material rather than the previously cached JWT.
+  longTokenCache = undefined;
+  return key;
 }
 
 // ── Token signing ──────────────────────────────────────────────────────────
@@ -159,6 +188,16 @@ export function buildPopupStart(): PopupStart {
   const cfg = loadAppleConfig();
   const developerToken = mintPopupDevToken();
   const nonce = randomBytes(32).toString("base64url");
+  // Defensive cap — mirror Spotify's state-store eviction (auth/spotify.ts).
+  if (nonceStore.size >= NONCE_STORE_MAX) {
+    sweepExpiredNonces();
+    while (nonceStore.size >= NONCE_STORE_MAX) {
+      const oldest = nonceStore.keys().next().value;
+      if (!oldest) break;
+      nonceStore.delete(oldest);
+    }
+    log.warn("apple.nonce_store_pressure_evicted", { size: nonceStore.size });
+  }
   nonceStore.set(nonce, { created_at: Date.now() });
   return { developerToken, nonce, appName: cfg.appleMusicKitAppName };
 }
@@ -181,6 +220,11 @@ export function handleCallback(nonceParam: string, mut: string): CallbackResult 
   nonceStore.delete(nonceParam);
   const stored: AppleTokens = { mut, captured_at: Date.now() };
   updateAppleTokens(stored);
+  // The new MUT may belong to a different Apple account (different
+  // storefront — US → JP, etc.); the storefront cache in clients/apple.ts
+  // is keyed on MUT prefix so a different MUT auto-invalidates on the next
+  // getStorefront() call. No explicit invalidation needed here, but the
+  // invariant is documented at the cache definition site.
   return { kind: "ok" };
 }
 
@@ -208,6 +252,9 @@ export const __test = {
     longTokenCache = undefined;
     cachedPrivateKey = undefined;
   },
+  // Cache-key form: "<path>@<mtimeNs>". Test verifies the rotation behavior
+  // by mutating the cached entry directly.
+  getPrivateKeyCacheKey: (): string | undefined => cachedPrivateKey?.cacheKey,
   size: (): number => nonceStore.size,
   runSweep: (now?: number): number => sweepExpiredNonces(now),
   popupTtlSeconds: SHORT_LIFE_SECONDS,

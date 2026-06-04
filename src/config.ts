@@ -74,35 +74,11 @@ export function checkEnv(): EnvCheckResult {
   };
 }
 
-/** Read the full config. Throws if any required key is missing — callers that
- * want a soft check (e.g. preflight) use {@link checkEnv} instead. Use this
- * only at sites that need both platforms; Spotify-only and Apple-only call
- * sites should use {@link loadSpotifyConfig} / {@link loadAppleConfig} so
- * they aren't blocked by the other platform's credentials being absent
- * (e.g. between ⏸B and ⏸C). */
-export function loadConfig(): AppConfig {
-  const r = checkEnv();
-  if (r.missingKeys.length > 0) {
-    throw new Error(
-      `Missing required env vars: ${r.missingKeys.join(", ")} (see .env.example)`,
-    );
-  }
-  if (!r.redirectUriMatches) {
-    throw new Error(
-      `SPOTIFY_REDIRECT_URI must equal "${SPOTIFY_REDIRECT_URI_EXPECTED}" ` +
-        `(see blueprint §4 / Phase 2 AC #2)`,
-    );
-  }
-  return {
-    spotifyClientId: process.env["SPOTIFY_CLIENT_ID"]!,
-    spotifyRedirectUri: process.env["SPOTIFY_REDIRECT_URI"]!,
-    appleTeamId: process.env["APPLE_TEAM_ID"]!,
-    appleKeyId: process.env["APPLE_KEY_ID"]!,
-    applePrivateKeyPath: resolve(ROOT, process.env["APPLE_PRIVATE_KEY_PATH"]!),
-    appleMusicKitAppName:
-      process.env["APPLE_MUSICKIT_APP_NAME"] ?? "music-transfer-self-serve",
-  };
-}
+// (The unified `loadConfig()` was removed — every call site now uses the
+// platform-scoped `loadSpotifyConfig()` or `loadAppleConfig()` below, so a
+// missing Apple key never blocks a Spotify-only code path and vice versa.
+// `AppConfig` is retained as a re-export shape for anything that wants the
+// full union; today no code references it.)
 
 export interface SpotifyConfig {
   readonly spotifyClientId: string;

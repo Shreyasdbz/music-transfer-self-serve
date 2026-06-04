@@ -37,11 +37,29 @@ interface StorefrontResponse {
   data: { id: string; attributes?: { defaultLanguageTag?: string; supportedLanguageTags?: string[] } }[];
 }
 
-let storefrontCache: string | undefined;
+// Cache keyed on the current MUT (first 16 chars — enough to discriminate
+// across reconnects without storing the full credential). When the user
+// reconnects Apple with a different account (different storefront — US → JP),
+// the MUT changes, the key misses, and we re-resolve. Without this, every
+// catalog lookup keeps using the previous account's storefront and silently
+// matches against the wrong region.
+interface StorefrontCacheEntry {
+  mutKey: string;
+  storefront: string;
+}
+let storefrontCache: StorefrontCacheEntry | undefined;
 
-/** Returns the user's storefront id (e.g. "us"). Cached per process. */
+function mutKey(): string {
+  return getMut().slice(0, 16);
+}
+
+/** Returns the user's storefront id (e.g. "us"). Cached for the lifetime of
+ * the current MUT — auto-invalidates on reconnect. */
 export async function getStorefront(): Promise<string> {
-  if (storefrontCache) return storefrontCache;
+  const key = mutKey();
+  if (storefrontCache && storefrontCache.mutKey === key) {
+    return storefrontCache.storefront;
+  }
   const r = await httpJson<StorefrontResponse>({
     method: "GET",
     url: `${API}/v1/me/storefront`,
@@ -49,10 +67,12 @@ export async function getStorefront(): Promise<string> {
   });
   const id = r.data[0]?.id;
   if (!id) throw new Error("apple_storefront_unresolved");
-  storefrontCache = id;
+  storefrontCache = { mutKey: key, storefront: id };
   return id;
 }
 
+/** Test-only / explicit invalidation (kept for symmetry; auto-invalidation
+ * via MUT-keyed cache handles normal reconnect flows). */
 export function clearStorefrontCache(): void {
   storefrontCache = undefined;
 }
@@ -67,11 +87,6 @@ export interface AppleLibraryPlaylist {
     readonly description?: { standard?: string };
     readonly playParams?: { id: string; isLibrary?: boolean; globalId?: string };
   };
-}
-
-interface LibraryPlaylistsResponse {
-  data: AppleLibraryPlaylist[];
-  next?: string;
 }
 
 async function paginate<T>(firstPath: string, headers: Record<string, string>): Promise<T[]> {
@@ -110,11 +125,36 @@ export interface AppleLibrarySong {
     readonly playParams?: { id: string; isLibrary?: boolean; catalogId?: string };
     readonly contentRating?: string; // "explicit" | "clean"
   };
+  // Populated when ?include=catalog is sent (which we always do for library
+  // reads). The catalog object holds the authoritative ISRC + contentRating
+  // for matching; library wrappers do not expose `isrc` directly.
+  readonly relationships?: {
+    catalog?: {
+      data: { id: string; type: "songs"; attributes?: { isrc?: string; name?: string; artistName?: string } }[];
+    };
+  };
+}
+
+/** Extract the ISRC for a library song, preferring the embedded catalog
+ * relationship (the wire-level ISRC) over `attributes.isrc` (often absent
+ * on library wrappers). Returns undefined when neither is populated —
+ * Phase 4 matcher then drops to the Tier-2 scored-search fallback. */
+export function libraryIsrc(s: AppleLibrarySong): string | undefined {
+  return s.relationships?.catalog?.data?.[0]?.attributes?.isrc ?? s.attributes.isrc;
+}
+
+/** Extract the catalog song id for a library song. Prefers the relationship
+ * (since `playParams.catalogId` doesn't ship with library-songs responses
+ * unless `?include=catalog` is set, even though the type allows it). */
+export function libraryCatalogId(s: AppleLibrarySong): string | undefined {
+  return s.relationships?.catalog?.data?.[0]?.id ?? s.attributes.playParams?.catalogId;
 }
 
 export async function listLibraryPlaylistTracks(playlistId: string): Promise<AppleLibrarySong[]> {
+  // ?include=catalog embeds the catalog song under relationships.catalog —
+  // this is the only way to surface ISRC on library reads.
   return paginate<AppleLibrarySong>(
-    `/v1/me/library/playlists/${encodeURIComponent(playlistId)}/tracks?limit=100`,
+    `/v1/me/library/playlists/${encodeURIComponent(playlistId)}/tracks?limit=100&include=catalog`,
     authedHeaders(),
   );
 }
@@ -128,7 +168,10 @@ export async function listLibraryPlaylistTracks(playlistId: string): Promise<App
  * See §6.3 — the favorite-a-song REST route has shifted and any read endpoint
  * must be verified against live Apple docs before wiring. */
 export async function listLibrarySongs(): Promise<AppleLibrarySong[]> {
-  return paginate<AppleLibrarySong>("/v1/me/library/songs?limit=100", authedHeaders());
+  return paginate<AppleLibrarySong>(
+    "/v1/me/library/songs?limit=100&include=catalog",
+    authedHeaders(),
+  );
 }
 
 // ── Catalog search + ISRC lookup ──────────────────────────────────────────
@@ -146,14 +189,16 @@ export interface AppleCatalogSong {
   };
 }
 
-interface CatalogSongsResponse {
-  data: AppleCatalogSong[];
-  next?: string;
-}
-
 /** ISRC lookup per §7 Tier 1. Returns *all* candidates so the matcher can
  * disambiguate (multiple results across single/album/deluxe; some may 404
- * on a follow-up fetch — caller validates). */
+ * on a follow-up fetch — caller validates).
+ *
+ * A single ISRC can yield multiple catalog entries (single release, deluxe,
+ * regional masters, compilation appearances). With 25 ISRCs per chunk and
+ * Apple's modest default page size, responses can exceed one page — we MUST
+ * follow `next` per chunk. The previous implementation pushed only the
+ * first page of each chunk and silently dropped the rest, causing Phase 4's
+ * matcher to miss candidates that should have disambiguated correctly. */
 export async function searchByIsrc(isrcs: string[]): Promise<AppleCatalogSong[]> {
   if (isrcs.length === 0) return [];
   const storefront = await getStorefront();
@@ -161,13 +206,10 @@ export async function searchByIsrc(isrcs: string[]): Promise<AppleCatalogSong[]>
   const out: AppleCatalogSong[] = [];
   for (let i = 0; i < isrcs.length; i += 25) {
     const chunk = isrcs.slice(i, i + 25);
-    const url = `${API}/v1/catalog/${encodeURIComponent(storefront)}/songs?filter[isrc]=${chunk.map(encodeURIComponent).join(",")}`;
-    const r = await httpJson<CatalogSongsResponse>({
-      method: "GET",
-      url,
-      headers: devTokenHeaders(),
-    });
-    out.push(...r.data);
+    const firstPath =
+      `/v1/catalog/${encodeURIComponent(storefront)}/songs?` +
+      `filter[isrc]=${chunk.map(encodeURIComponent).join(",")}&limit=100`;
+    out.push(...(await paginate<AppleCatalogSong>(firstPath, devTokenHeaders())));
   }
   return out;
 }

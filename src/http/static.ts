@@ -28,7 +28,14 @@ const MIME: Record<string, string> = {
 
 function resolveSafe(urlPath: string): string | undefined {
   const clean = urlPath.split("?")[0] ?? "/";
-  const decoded = decodeURIComponent(clean);
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(clean);
+  } catch {
+    // Malformed percent-encoding — treat as "no such file" so the caller
+    // returns 404 rather than letting the URIError bubble to a 500.
+    return undefined;
+  }
   const target = normalize(resolve(WEB_DIR, "." + decoded));
   if (target !== WEB_DIR && !target.startsWith(WEB_DIR + sep)) return undefined;
   if (!existsSync(target)) return undefined;

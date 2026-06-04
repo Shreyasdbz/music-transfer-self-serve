@@ -479,3 +479,108 @@ Keep entries factual and terse.
   + `matcher.ts`), ledger-backed cache. No pause points. Will land the
   `?include=catalog` / `catalogId`-lookup hop for library-side ISRCs as part
   of the Apple-side matcher.
+
+### 2026-06-04 — Validation sweep: 5 personas → 25 confirmed findings → fixed
+
+- Triggered a multi-persona deep validation pass before starting Phase 4. Ran a Workflow
+  with 5 reviewers (security, API truthfulness, architecture, regression / build-readiness,
+  blueprint compliance) in parallel, each emitting structured findings, then an adversarial
+  refute-by-default verifier on each finding individually. 49 raw → **25 confirmed**
+  (4 high, 9 medium, 12 low; #3 and #10 were the same bug → 23 unique).
+
+- **Tier 1 — Security highs.**
+  1. **#1 Stored XSS in Spotify OAuth callback.** `?error=<script>…` was echoed unescaped
+     into the auto-close HTML via `sendAutoCloseHtml`. Single cross-origin top-level
+     navigation → script execution in trusted local origin → CSRF token theft → drive any
+     POST. Fixed: `sendAutoCloseHtml` now HTML-escapes its `message` argument; the Spotify
+     callback no longer echoes `errParam` at all (fixed string instead, raw error logged
+     server-side); CSP `default-src 'none'; style-src 'unsafe-inline'; script-src
+     'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'` on the auto-close page;
+     X-Frame-Options: DENY. Regression covered by new `src/http/server.test.ts`.
+  2. **#24 `src/util/log.test.ts` missing.** Blueprint §12 literally mandates it. Wrote
+     comprehensive coverage: every header in REDACTED_HEADER_NAMES, every body key in
+     REDACTED_BODY_KEYS (with `mut` added), Bearer 40+ regex, BEGIN PRIVATE KEY block,
+     redactUrl per blueprint §12 (query-param redaction), case-sensitivity audit. 39
+     assertions.
+  3. **#23 URL query strings logged verbatim.** Blueprint §12 requires query params with
+     sensitive names to be redacted. Added `redactUrl()` in util/log.ts; all `req.url`
+     usages in util/http.ts now route through it; tested.
+  4. **#25 `mut` body key missing.** The wire JSON for `/api/auth/apple/callback` uses
+     `mut`, not `musicUserToken`, so the existing redaction missed it. Added.
+
+- **Tier 2 — Token/refresh robustness.**
+  5. **#3/#10 Spotify refresh-token rotation race.** Concurrent `getAccessToken()` calls
+     would each enter `refreshAccessToken` with the same `refresh_token`; Spotify rotates
+     on use, so the losers retry with the now-invalidated token. Fixed: single in-flight
+     promise (`refreshInFlight`); `refreshAccessToken` returns the same promise to all
+     callers and clears it in `.finally`. Critical before Phase 4 (matcher fans out
+     parallel catalog reads).
+  6. **#12 storefrontCache never invalidates on Apple reconnect.** US → JP account switch
+     would keep the old storefront cached. Fixed: cache is now keyed on the MUT prefix so
+     a different MUT auto-invalidates. Avoids the circular import that explicit
+     invalidation from `auth/apple.ts` would have introduced.
+  7. **#16 apple.test.ts pollution edge case.** Snapshot/restore only restored when
+     `data/tokens.json` existed beforehand; on a fresh clone the test created the file
+     with a junk MUT and the restore hook didn't `unlinkSync` it. Fixed: restore now
+     mirrors the original presence/absence state.
+  8. **#9 / #13 Apple library reads omit `include=catalog`.** Library-track responses
+     don't expose ISRC directly; without `include=catalog` the matcher has no way to
+     round-trip back to the catalog song. Fixed: every library read now sends
+     `&include=catalog`; new `libraryIsrc()` and `libraryCatalogId()` helpers read the
+     embedded relationship with `attributes.isrc` / `playParams.catalogId` fallbacks.
+     Live verified against your "India Spice 🌶️" playlist: **98/118 ISRCs + 117/118
+     catalog IDs surface (was 0/118)**.
+
+- **Tier 3 — API correctness.**
+  9. **#8 `searchByIsrc` truncates results.** Per-chunk requests pushed only the first
+     page and ignored `next`. A single ISRC can match multiple catalog entries (single /
+     deluxe / regional masters / compilation appearances); the matcher would silently
+     lose disambiguation candidates. Fixed: each chunk now routes through `paginate()`
+     with `&limit=100`.
+
+- **Tier 4 — Build hygiene + Phase 1 AC tests.**
+  10. **#17 `npm run doctor` → ENOENT.** Phase 5 owns the real implementation; until
+      then a tiny `src/cli.ts` stub exits 2 with "not implemented yet (Phase 5)" so
+      anyone following README sees a clear pointer instead of a tsx module error.
+  11. **#18 `npm run lint` fails out of the box.** Dropped unused `SPOTIFY_REDIRECT_URI_EXPECTED`
+      import in spotify.ts; removed `LibraryPlaylistsResponse` and `CatalogSongsResponse`
+      types that were no longer referenced after switching to inline `paginate<T>` types.
+      `npm run lint` now exits 0.
+  12. **#19 Phase 1 AC #2 + #4 had no automated coverage.** PROGRESS claimed both were
+      verified, but only manually. Wrote `src/http/server.test.ts` (raw TCP socket to
+      exercise Host=localhost rejection that fetch can't reach; CSRF + Origin matrix;
+      XSS regression with CSP header check — 10 assertions) and `src/ledger/db.test.ts`
+      (schema version + tables + partial-unique indexes + startup-sweep marks running
+      → interrupted + appends event row + idempotency — 18 assertions). Both wired
+      into `npm test`. **Total suite: 112/112 PASS** (log 39, spotify 21, apple 24,
+      http 10, ledger 18).
+
+- **Tier 5 — Defense-in-depth + lows.** Fixed every remaining low individually:
+  - **#2 HttpError.bodySafe → body** (renamed), and the body + URL pass through `redact()`
+    and `redactUrl()` so error messages embedded in logs are safe to forward.
+  - **#4 state/nonce stores capped at 10k entries** with oldest-first eviction. Defense
+    against a misbehaving caller exhausting RAM between sweeps.
+  - **#5 auto-close HTML now ships strict CSP + X-Frame-Options: DENY** (covered by #1).
+  - **#6 secrets/ chmod failure now logs loudly** instead of silently best-effort.
+  - **#7 oversize POST → 413, not 500.** Renamed the body-parser error to
+    `BodyTooLargeError`; route handlers re-throw it so the global handler maps to 413.
+    Body parser no longer destroys the request mid-stream (was causing ECONNRESET
+    instead of a clean response). Verified live with a 1.2 MB body → `{"error":"body_too_large"}`.
+  - **#11 HttpError.isNetworkError flag** disambiguates real `status=0` from a
+    retry-pool-exhausted network failure.
+  - **#14 dead `loadConfig()` removed.** Every call site uses `loadSpotifyConfig` /
+    `loadAppleConfig`.
+  - **#15 .p8 cache invalidates on file change.** Cache key combines path + mtimeMs.
+    Rotating the .p8 in place via the Apple Developer dashboard is now picked up on the
+    next call without restarting the server. Also invalidates the cached long-lived JWT
+    so the next sign uses the new key material.
+  - **#20 `resolveSafe` no longer crashes on malformed `%`** — returns undefined → 404.
+  - **#21 `dev.sh stop` won't kill someone else's `tsx src/server.ts`** — match is now
+    anchored to this repo's absolute path.
+  - **#22 web/app.js null-check on CSRF meta** — a regression in the static handler
+    no longer wedges the whole script with a TypeError.
+
+- Lint: clean. Build: clean. Tests: **112/112 PASS, 0 FAIL** across 5 suites. Live boot
+  verifies auth status, XSS fix, and 413 path all work end-to-end.
+
+- **Phase 4 (matching engine) starts on a clean floor.** Ready to go.
