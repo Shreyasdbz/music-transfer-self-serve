@@ -220,11 +220,20 @@ interface SearchResponse {
   };
 }
 
+// Apple's catalog /search caps `limit` at 25.
+const APPLE_SEARCH_MAX_LIMIT = 25;
+
 /** Scored-search fallback per §7 Tier 2. Returns up to `limit` candidates;
- * the matcher scores and picks. */
-export async function searchCatalog(query: string, limit = 25): Promise<AppleCatalogSong[]> {
+ * the matcher scores and picks. Apple's `term=` is a free-text field (no
+ * Spotify-style operator syntax), but we still strip control characters and
+ * quotes for defense in depth, and clamp `limit` to Apple's max of 25. */
+export async function searchCatalog(query: string, limit = APPLE_SEARCH_MAX_LIMIT): Promise<AppleCatalogSong[]> {
+  // Strip double-quotes only; keep dashes/punctuation legitimately in titles (e.g. "Spider-Man").
+  const safeTerm = query.replace(/["]/g, " ").replace(/\s+/g, " ").trim();
+  if (safeTerm.length === 0) return [];
+  const safeLimit = Math.min(Math.max(1, limit), APPLE_SEARCH_MAX_LIMIT);
   const storefront = await getStorefront();
-  const url = `${API}/v1/catalog/${encodeURIComponent(storefront)}/search?term=${encodeURIComponent(query)}&types=songs&limit=${limit}`;
+  const url = `${API}/v1/catalog/${encodeURIComponent(storefront)}/search?term=${encodeURIComponent(safeTerm)}&types=songs&limit=${safeLimit}`;
   const r = await httpJson<SearchResponse>({
     method: "GET",
     url,

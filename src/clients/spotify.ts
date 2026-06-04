@@ -129,6 +129,32 @@ interface SearchResponse {
   tracks?: { items: SpotifyTrack[] };
 }
 
+// Spotify's /v1/search caps `limit` at 10 (default 5) — values above 10
+// return 400. (https://developer.spotify.com/documentation/web-api/reference/search)
+const SPOTIFY_SEARCH_MAX_LIMIT = 10;
+
+/** Strip Spotify search field-operators from a free-text term so a track
+ * title like `Bad OR isrc:GBUM71029601` or `X track:"Wonderwall"` can't
+ * hijack the query into pulling unrelated recordings. `encodeURIComponent`
+ * URL-encodes but does NOT neutralize Spotify's `q=` operator syntax. */
+export function sanitizeSearchTerm(term: string): string {
+  return term
+    .replace(/["':]/g, " ")
+    .replace(/\b(?:AND|OR|NOT|track|artist|album|isrc|year|tag|genre|upc|label)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Why no `market` param: a validation pass suggested adding `market=from_token`
+// (the docs note catalog availability can vary by market). But `from_token`
+// requires the `user-read-private` scope to resolve the user's country, and
+// our §5.1 scope set deliberately omits it. Adding the param returns
+// `403 Insufficient client scope` (verified live 2026-06-04). For a
+// user-authorized token, Spotify already scopes catalog availability to the
+// authenticated user without an explicit market, so we omit it rather than
+// broaden our scopes. (The market concern is really about app-only / client-
+// credentials tokens, which we don't use.)
+
 /** Tier-1 Apple→Spotify match. Spotify accepts `q=isrc:CODE` and returns the
  * recording(s) carrying that ISRC. Multiple results are possible (same
  * recording across single/album/deluxe); the matcher disambiguates.
@@ -142,9 +168,14 @@ export async function searchTracksByIsrc(isrc: string): Promise<SpotifyTrack[]> 
   return r.tracks?.items ?? [];
 }
 
-/** Tier-2 scored search. `term` is typically "<title> <primary artist>". */
-export async function searchTracks(term: string, limit = 25): Promise<SpotifyTrack[]> {
-  const url = `${API}/v1/search?q=${encodeURIComponent(term)}&type=track&limit=${limit}`;
+/** Tier-2 scored search. `term` is typically "<title> <primary artist>";
+ * it's sanitized of Spotify field-operators first. `limit` is clamped to
+ * Spotify's documented max of 10. */
+export async function searchTracks(term: string, limit = SPOTIFY_SEARCH_MAX_LIMIT): Promise<SpotifyTrack[]> {
+  const safeLimit = Math.min(Math.max(1, limit), SPOTIFY_SEARCH_MAX_LIMIT);
+  const safeTerm = sanitizeSearchTerm(term);
+  if (safeTerm.length === 0) return [];
+  const url = `${API}/v1/search?q=${encodeURIComponent(safeTerm)}&type=track&limit=${safeLimit}`;
   const r = await httpJson<SearchResponse>({ method: "GET", url, headers: await bearer() });
   return r.tracks?.items ?? [];
 }

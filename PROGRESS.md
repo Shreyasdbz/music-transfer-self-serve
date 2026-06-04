@@ -647,3 +647,97 @@ Keep entries factual and terse.
   (`searchByIsrc`, `searchCatalog`, `getTopChartSongs`, `searchTracksByIsrc`,
   `searchTracks`) give the preflight runner everything it needs for the
   `spotify_search` and `apple_isrc_lookup` checks.
+
+### 2026-06-04 — Phase 4 validation sweep: 25 confirmed findings → fixed
+
+- Ran a 5-persona deep validation (security, API truthfulness, architecture, regression,
+  blueprint compliance) over Phase 4 + its deltas, each finding adversarially verified.
+  33 raw → **25 confirmed** (5 high, 11 medium, 9 low). After dedup ≈18 unique. All
+  addressed; the sweep also caught one of its OWN recommendations being wrong (see #6).
+
+- **Matcher correctness (Tier A):**
+  - **#12/#24 (HIGH) Tier-1 never validated candidates.** §7 requires "first _validated_
+    (non-404, fully-attributed)". Added `isValidatedCandidate` (non-empty title + artist +
+    durationMs > 0); `disambiguateIsrcCandidates` now filters to validated candidates
+    first and returns undefined when none validate (caller falls through to Tier-2 rather
+    than returning a stub `data[0]`). Exported both for tests.
+  - **#11/#19 (HIGH) cacheHit reconstructed destination from source-side + sqlite null.**
+    sqlite returns SQL NULL as JS `null`, which violated the `string | undefined` field
+    types; added an `nn()` coercion at the read boundary. Documented that
+    `destination.canonical` on a cache hit carries NORMALIZED identity fields (not display
+    strings) and that Phase 7 must use `destination.id` + the destination set `D` for
+    display, never these fields.
+  - **#2 (MEDIUM) fuzzy-key cache poisoning.** Two distinct recordings can share a
+    `fuzzy:<title>|<artist>|<bucket>` key. `cacheHit` now re-verifies stored
+    norm_title/norm_artist/duration against the live source for fuzzy keys; a mismatch is
+    treated as a miss and re-resolved. ISRC keys are globally unique and skip the check.
+  - **#14 (MEDIUM) non-deterministic ties.** `bestScored` now breaks score ties by
+    lowest `(isrc, sourceId)` so re-runs pick the same candidate regardless of the order
+    the platform returned them.
+  - **#13 (MEDIUM) unmatched persisted, suppressing retries.** Per §12.5 self-healing, an
+    unmatched track must retry on the next run (catalogs drift). `persist` now skips
+    `unmatched` rows entirely; the unmatched event (with rejected candidate + score) is
+    still emitted live for Phase 7's `operation_events`.
+  - **#9 (MEDIUM) explicit flag false-positive.** `appleCatalogToCanonical` mapped
+    `contentRating === "explicit"`, yielding `false` when the rating was simply absent —
+    spuriously earning the +10 explicit-match bonus. Now maps absent → `undefined`.
+  - **#8 (LOW) album disambiguation used normTitle** (which strips "(feat. …)"); switched
+    to plain `normalize` for album comparison.
+  - **#21 (MEDIUM) no fake-client injection.** Added `__setMatcherClients` /
+    `__resetMatcherClients` seam so Tier-1/Tier-2 paths are unit-testable without live
+    tokens.
+
+- **Spotify API correctness (Tier B):**
+  - **#5 (HIGH) `searchTracks` limit=25 but Spotify caps at 10.** Clamped to 10
+    (`SPOTIFY_SEARCH_MAX_LIMIT`); matcher passes 10.
+  - **#1/#23 (LOW) search-term operator injection.** A title like
+    `Bad OR isrc:GBUM71029601` would hijack the `q=` query. Added `sanitizeSearchTerm`
+    that strips Spotify field-operators (AND/OR/NOT/track:/artist:/isrc:/…) and quotes/
+    colons before the search. Apple's `searchCatalog` strips quotes for defense in depth
+    and clamps `limit` to 25.
+  - **#6 (MEDIUM) — REJECTED after live test.** The verifier said to add
+    `market=from_token` to Spotify search. Adding it returned `403 Insufficient client
+    scope` live, because `from_token` requires the `user-read-private` scope we
+    deliberately don't request (§5.1). A user-authorized token already scopes catalog
+    availability to the user without an explicit market. Reverted the market addition;
+    documented why inline. (The market concern applies to app-only tokens, which we
+    don't use.) This is the sweep catching its own false positive — kept the limit clamp
+    and sanitization, dropped the market change.
+
+- **Identity robustness (Tier C):**
+  - **#10 (LOW) normalize() used literal combining-diacritic chars** (fragile/invisible
+    across editors). Switched to explicit `/[̀-ͯ]/g` escapes.
+  - **#7/#25 (LOW/MEDIUM) VARIANT_TOKENS drift.** Implementation had 12 tokens vs the
+    spec's 9 (added `remastered`, `acoustic`, `demo`). Rather than revert useful
+    additions, **amended blueprint §7 + §15** to reflect them (the §0 governing principle
+    grants heuristic evolution at the implementation tier; matching only gets stricter).
+
+- **Test infrastructure (Tier D):**
+  - **#17 (HIGH)** Tier-1 disambiguation: 11 new assertions (album match / non-comp /
+    all-comp fallback / single / empty / all-invalid / validation predicate).
+  - **#18 (MEDIUM)** symmetric `matchAppleToSpotify` now exercised via fakes.
+  - **#20 (MEDIUM)** new `src/ledger/tracksCache.test.ts` (12 assertions) covering
+    round-trip, the COALESCE cross-direction-id preservation invariant, overwrite of
+    non-COALESCE fields, delete, and the sqlite-NULL-returns-null behavior that justifies
+    the `nn()` coercion.
+  - **#22 (MEDIUM)** `match.test.ts` now restores the ledger on SIGINT too, not just exit.
+  - Matcher Tier-1/Tier-2 happy + fall-through + unmatched-not-cached + tie-break +
+    fuzzy-collision-guard all unit-tested via injected fakes.
+
+- **Documented / accepted lows (no code change, rationale recorded):**
+  - **#3** search URLs logged at debug include the track title in `q=`. Track titles are
+    NOT secrets (not in the §12 redaction list), and this is debug-level only. No action.
+  - **#15** "parallel matcher ledger writes race." better-sqlite3 is synchronous and the
+    upsert is a single atomic statement under WAL; within a Node turn there's no
+    interleaving. Phase 7 runs one Operation at a time (§8). Accepted.
+  - **#16** VARIANT_TOKENS "live"/"edit" can match a song genuinely titled with that
+    word. The penalty only fires when the token is in the candidate but NOT the source
+    (asymmetric), so a same-titled match is unaffected; this is inherent to the §7
+    heuristic and per-spec. Accepted.
+
+- Live AC #1 re-verified after all changes (ephemeral script): 1a explicit→Apple ISRC
+  (Dust → 6769568594, explicit=true), 1b no-ISRC→Tier-2 (conf 100), 1c symmetric
+  Apple→Spotify (Janice STFU → 514joG…), 1d cache hit (fromCache=true) — all PASS.
+- **Total suite: 190/190 PASS** across 7 suites (log 39, spotify 21, apple 24, http 10,
+  ledger 18, trackscache 12, match 66). Lint clean. Build clean.
+- Phase 4 re-closed on a clean floor. Next: Phase 5 — Permissions preflight + gate.

@@ -73,7 +73,7 @@ export function normalize(s: string | undefined | null): string {
   if (!s) return "";
   return s
     .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "") // strip combining diacritics
+    .replace(/[\u0300-\u036f]/g, "") // strip combining diacritics (U+0300–U+036F)
     .toLowerCase()
     .replace(/[\p{P}\p{S}]/gu, " ") // punctuation + symbols → space
     .replace(/\s+/g, " ")
