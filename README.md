@@ -75,7 +75,7 @@ The build/run is mostly hands-off; you're only pulled in at four credential boun
    `data/tokens.json`.
 5. **Verify**
    ```bash
-   npx tsx src/cli.ts doctor    # checks env, tokens, storefront, Apple capability probes
+   npx tsx src/cli.ts doctor    # runs the same 10-check preflight as the UI button
    ```
 
 ## Usage

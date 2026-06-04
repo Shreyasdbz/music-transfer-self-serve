@@ -198,7 +198,7 @@ music-transfer-self-serve/
 │  ├─ app.css
 │  ├─ app.js                    # vanilla JS, no framework / no bundler
 │  └─ musickit.html             # the MUT-capture page loaded during Apple auth
-├─ data/                        # GITIGNORED: sync.sqlite, tokens.json
+├─ data/                        # GITIGNORED: ledger.sqlite, tokens.json
 └─ secrets/                     # GITIGNORED: AuthKey_*.p8
 ```
 
@@ -235,12 +235,19 @@ Tokens captured at runtime (Spotify refresh token, Apple MUT) are written to
 
 ```
 SPOTIFY_CLIENT_ID=
-SPOTIFY_REDIRECT_URI=http://127.0.0.1:8888/callback
+SPOTIFY_REDIRECT_URI=http://127.0.0.1:8888/auth/spotify/callback
 APPLE_TEAM_ID=
 APPLE_KEY_ID=
 APPLE_PRIVATE_KEY_PATH=secrets/AuthKey_XXXXXXXXXX.p8
-APPLE_MUSICKIT_APP_NAME=spotify-to-apple-music
+APPLE_MUSICKIT_APP_NAME=music-transfer-self-serve
 ```
+
+The redirect URI **MUST** match byte-for-byte between four places:
+`.env`, the Spotify Developer Dashboard app settings,
+the `/api/auth/spotify/start` server code that builds the authorize URL,
+and the `/auth/spotify/callback` route the server serves.
+Spotify rejects any mismatch with `INVALID_REDIRECT_URI`.
+Phase 2 acceptance includes a literal-string-equality check across these sources.
 
 Note: Spotify uses PKCE, so there is **no client secret** to store — good.
 Do not introduce one.
@@ -520,13 +527,15 @@ CREATE TABLE tracks (
 
 -- cached listing of the user's playlists per platform, populated by "Update Catalog"
 CREATE TABLE catalog (
-  platform     TEXT,             -- 'spotify' | 'apple'
-  kind         TEXT,              -- 'playlist' | 'liked' | 'favorites'
-  external_id  TEXT,              -- platform id (empty for liked/favorites singletons)
+  platform     TEXT NOT NULL,      -- 'spotify' | 'apple'
+  kind         TEXT NOT NULL,      -- 'playlist' | 'liked' | 'favorites'
+  external_id  TEXT NOT NULL,      -- platform id; for liked/favorites singletons
+                                   -- use sentinel '__liked__' or '__favorites__'
+                                   -- (NEVER empty string or NULL — both break the PK)
   name         TEXT,
-  owner        TEXT,              -- spotify owner / apple curator (nullable)
+  owner        TEXT,               -- spotify owner / apple curator (nullable)
   track_count  INTEGER,
-  url          TEXT,              -- deep link (nullable)
+  url          TEXT,               -- deep link (nullable)
   fetched_at   TEXT,
   PRIMARY KEY (platform, kind, external_id)
 );
@@ -534,24 +543,28 @@ CREATE TABLE catalog (
 -- one row per Permissions preflight run (UI button or CLI `doctor`)
 CREATE TABLE preflight_runs (
   id          TEXT PRIMARY KEY,   -- ulid/uuid
-  started_at  TEXT,
+  started_at  TEXT NOT NULL,
   finished_at TEXT,                -- nullable while running
-  status      TEXT,                -- 'running' | 'passed' | 'failed' | 'partial' | 'invalidated'
-  trigger     TEXT,                -- 'manual' | 'cli' | 'auto-401' | 'auto-403-scope'
-  surface     TEXT                  -- 'ui' | 'cli'
+  status      TEXT NOT NULL,       -- 'running' | 'passed' | 'failed' | 'partial' | 'invalidated'
+  trigger     TEXT NOT NULL,       -- 'manual' | 'cli' | 'auto-401' | 'auto-403-scope'
+  surface     TEXT NOT NULL        -- 'ui' | 'cli'
 );
+
+-- at most ONE preflight may be 'running' at a time; enforced by partial unique index
+CREATE UNIQUE INDEX one_running_preflight ON preflight_runs(status)
+  WHERE status = 'running';
 
 -- per-check result row, ordered by seq within a preflight run
 CREATE TABLE preflight_checks (
-  run_id      TEXT,
-  seq         INTEGER,
-  name        TEXT,                 -- v1: 'env' | 'spotify_token' | 'spotify_scopes' |
+  run_id      TEXT NOT NULL,
+  seq         INTEGER NOT NULL,
+  name        TEXT NOT NULL,        -- v1: 'env' | 'spotify_token' | 'spotify_scopes' |
                                     -- 'spotify_me' | 'spotify_search' | 'apple_dev_token' |
                                     -- 'apple_mut' | 'apple_storefront' |
                                     -- 'apple_library_read' | 'apple_isrc_lookup'
                                     -- ('apple_delete_probe' returns if removals do; §6.2)
-  status      TEXT,                 -- 'pass' | 'warn' | 'fail' | 'skip'
-  detail      TEXT,                 -- JSON; MUST be redaction-safe (no tokens, no keys)
+  status      TEXT NOT NULL,        -- 'pass' | 'fail' | 'skip'   ('warn' was dropped 2026-06-03)
+  detail      TEXT,                 -- JSON; MUST conform to the per-check allow-list (§12)
   duration_ms INTEGER,
   PRIMARY KEY (run_id, seq)
 );
@@ -559,32 +572,74 @@ CREATE TABLE preflight_checks (
 -- one row per Operation the human has run (or started running)
 CREATE TABLE operations (
   id                 TEXT PRIMARY KEY,  -- ulid/uuid
-  created_at         TEXT,
+  created_at         TEXT NOT NULL,
   finished_at        TEXT,              -- nullable while running
-  source             TEXT,              -- 'spotify' | 'apple'
-  destination        TEXT,              -- 'spotify' | 'apple'
-  source_target      TEXT,              -- JSON { kind: 'playlist'|'liked'|'favorites', id?, name?, url? }
-  destination_target TEXT,              -- JSON same shape
-  status             TEXT,              -- 'queued' | 'running' | 'succeeded' | 'partial' | 'failed'
-  summary            TEXT                -- JSON counts: read, matched, skipped, written, unmatched, failed
+  source             TEXT NOT NULL,     -- 'spotify' | 'apple'
+  destination        TEXT NOT NULL,     -- 'spotify' | 'apple'
+  source_target      TEXT NOT NULL,     -- JSON { kind: 'playlist'|'liked'|'favorites', id?, name?, url? }
+  destination_target TEXT NOT NULL,     -- JSON same shape
+  status             TEXT NOT NULL,     -- 'queued' | 'running' | 'succeeded' | 'partial' |
+                                        -- 'failed' | 'interrupted'  ('interrupted' = startup
+                                        --  reconciliation found this row stuck in 'running'
+                                        --  after a server crash; see §12.5)
+  summary            TEXT               -- JSON counts: read, matched, skipped, written, unmatched, failed
 );
+
+-- at most ONE Operation may be 'running' at a time; enforced by partial unique index
+-- (in addition to the in-process serialization in §11.2 / §8)
+CREATE UNIQUE INDEX one_running_op ON operations(status) WHERE status = 'running';
+
+-- recency lookups for the gating policy (§11.1) — "latest passed preflight within last 24h"
+CREATE INDEX preflight_runs_finished ON preflight_runs(finished_at DESC);
+CREATE INDEX operations_finished ON operations(finished_at DESC);
 
 -- append-only, ordered event log per Operation; backs SSE live + replay
 CREATE TABLE operation_events (
-  operation_id TEXT,
-  seq          INTEGER,
-  ts           TEXT,
-  type         TEXT,               -- 'stage' | 'match' | 'skip' | 'write' | 'unmatched' | 'error' | 'done'
-  payload      TEXT,                -- JSON
+  operation_id TEXT NOT NULL,
+  seq          INTEGER NOT NULL,
+  ts           TEXT NOT NULL,
+  type         TEXT NOT NULL,        -- 'stage' | 'match' | 'skip' | 'write' | 'unmatched' |
+                                     -- 'error' | 'done' | 'interrupted'
+  payload      TEXT,                 -- JSON
   PRIMARY KEY (operation_id, seq)
 );
 ```
 
 The ledger is the source of truth for resumability, idempotency, and the SSE event-log
 replay — not the live services.
-Before creating a new playlist on the destination side (free-text name case),
-check the catalog cache and the live library for an existing one with the same name to
-avoid duplicates; if found, prefer the existing one and surface a confirmation in the UI.
+
+**SQLite configuration (db.ts on open):**
+- `PRAGMA journal_mode = WAL;` — readers don't block writers; required because the HTTP
+  server's request handlers and the Operation runner both touch the DB concurrently.
+- `PRAGMA foreign_keys = ON;` — even though the schema above doesn't declare FKs explicitly
+  in v1, future amendments may, and this is a one-line forward investment.
+- `PRAGMA synchronous = NORMAL;` — paired with WAL, durable enough for a single-user local
+  tool; faster than `FULL`.
+
+**Schema-version semantics (consumed by `ledger/db.ts` on startup):**
+- A fresh DB starts at version 0 (no row). `db.ts` runs migrations in order from
+  `current_version + 1` up to `LATEST_VERSION`, each in its own transaction, and each
+  migration ends by `INSERT OR REPLACE INTO schema_version VALUES (N)`.
+- v1 ships with `LATEST_VERSION = 1` (this schema). The first run on a fresh DB applies
+  migration #1 which creates all tables + indexes above.
+- Migrations are forward-only. Never write a down-migration; the cost of forgetting and
+  running one in production is too high for a single-user tool with no test DB.
+
+**Disambiguation rules** (referenced from §8 step 2 and §11.1):
+
+Before creating a new playlist on the destination side (free-text name case), normalize the
+typed name (trim + collapse internal whitespace + case-fold) and search the catalog cache
+**and** the live library for matches by normalized name. Then:
+- **0 matches** — create the new playlist (destination side only; on the source side, the
+  Operation fails with a clear error since you can't transfer from a playlist that doesn't
+  exist).
+- **1 match** — auto-resolve to that playlist. Record the resolution in the Operation's
+  event log so the user can confirm in the Run panel.
+- **≥2 matches** — server returns `422 Unprocessable Entity` with the candidate list
+  (id, name, owner, track_count, url) on the relevant side. The UI shows a disambiguation
+  modal and the user picks one (or, on the destination side, chooses "create new with this
+  name anyway"). The re-submitted POST includes the resolved `id`, bypassing the name
+  lookup.
 
 ---
 
@@ -608,6 +663,131 @@ see Amendment log §15 (2026-06-03).
 ---
 
 ## 11. Surface — web UI + minimal CLI
+
+### 11.0 Local-server security model (read this before reading 11.1–11.3)
+
+The local Node HTTP server is a unique trust environment.
+It serves the UI to the user's own browser — but **any** page in any tab of that same
+browser can, in principle, issue HTTP requests to `127.0.0.1:8888`.
+The browser same-origin policy blocks cross-origin **reads** of responses;
+it does **not** block cross-origin **sends** (a malicious page can POST to our endpoints
+and we'd execute the action even if the attacker never sees the response).
+
+§11 was originally written as if a local server were trust-equivalent to a CLI process.
+It isn't. The defenses below are required — every route in §11.2 must obey them,
+and Phases 1, 2, and 3 must implement the corresponding pieces.
+
+**Network surface.**
+
+- The server **MUST** bind to `127.0.0.1` only (`server.listen(8888, '127.0.0.1', ...)`),
+  never `0.0.0.0` or unspecified.
+  This prevents the server from ever being reachable from the network — only from the
+  same host.
+- Fixed port `8888` (matches the redirect URI in §4).
+  If the port is taken, fail with a clear error; do not silently fall back.
+
+**Origin and Host header validation.**
+
+Every state-changing route (any `POST` in §11.2, plus the two OAuth callbacks
+`/auth/spotify/callback` and `/api/auth/apple/callback`) **MUST** reject the request
+with `403 Forbidden` if **any** of these fail:
+
+- `Host` header is not exactly `127.0.0.1:8888`.
+- `Origin` header is missing on a `POST`. (Modern browsers always send `Origin` on
+  cross-origin POSTs; missing-on-POST signals a non-browser client we don't serve.)
+- `Origin` header is present and is not exactly `http://127.0.0.1:8888`.
+- The Spotify callback (`GET /auth/spotify/callback`) is exempt from the `Origin` check
+  (Spotify's redirect is a top-level navigation, no Origin) but **must** validate the
+  `state` parameter (below).
+- The Apple callback (`POST /api/auth/apple/callback`) gets the full Origin + nonce check.
+
+GET routes that only return data (e.g. `/api/health`, `/api/preflight/latest`,
+`/api/catalog`) do not require Origin checks since cross-origin reads are blocked by
+the browser; but they **must** still validate `Host` to prevent DNS-rebinding attacks
+that resolve a public hostname to 127.0.0.1.
+
+**CSRF token (per-server-start, browser-served).**
+
+At server startup, generate a CSRF token: 32 random bytes from `crypto.randomBytes(32)`,
+base64url-encoded.
+Embed it in the served HTML as `<meta name="csrf-token" content="...">`.
+The UI's `app.js` reads it at load and includes it on every state-changing request as
+the header `X-CSRF-Token`.
+Every `POST` route **MUST** reject the request with `403 Forbidden` if the header is
+absent or does not match the server-start token.
+The token rotates on every server restart; the UI re-reads it on every full page load.
+SSE GET endpoints do not require the CSRF header (idempotent reads), but they DO require
+the `Host` check.
+
+**OAuth `state` + PKCE `code_verifier` server-side store.**
+
+`POST /api/auth/spotify/start` performs:
+1. Generate `state` — 32 random bytes, base64url-encoded.
+2. Generate `code_verifier` per RFC 7636 (43–128 chars, base64url alphabet).
+3. Derive `code_challenge = base64url(SHA256(code_verifier))`.
+4. Store `{ state → { code_verifier, created_at } }` in an in-memory `Map`.
+5. Return `{ authorizeUrl }` with `state`, `code_challenge`, `code_challenge_method=S256`,
+   and the exact `redirect_uri` from §4 embedded.
+
+`GET /auth/spotify/callback` performs:
+1. Extract `state` and `code` from the query string.
+2. Look up `state` in the in-memory map.
+   If missing → `403 Forbidden` (state forged or expired).
+   If `Date.now() - created_at > 10 * 60 * 1000` → `403` (expired) and delete the entry.
+3. Retrieve the `code_verifier`; exchange `code` + `code_verifier` for tokens at Spotify.
+4. Persist tokens + granted `scope` to `data/tokens.json` (§5.1).
+5. **Delete** the state entry (one-time use).
+6. Serve a tiny HTML page that calls `window.close()` (popup auto-close); the UI's main
+   window detects the auth-status flip by polling `/api/auth/status` on focus.
+
+Sweep the in-memory state map every 60s to drop entries older than 10 minutes.
+
+**Apple popup nonce.**
+
+`POST /api/auth/apple/start` performs:
+1. Generate `nonce` — 32 random bytes, base64url.
+2. Mint a **short-lived** developer token: ES256-signed JWT with `exp = now + 600s`
+   (10 minutes), same `iss` (Team ID) and `kid` (Key ID) as the long-lived token,
+   signed with the same `.p8`. **This** is the token returned to the browser — never
+   the 180-day token.
+3. Store `{ nonce → { created_at } }` in an in-memory `Map`.
+4. Return `{ developerToken, nonce }` to the popup.
+
+The popup HTML (`web/musickit.html`) loads MusicKit JS, configures it with the
+short-lived developer token, calls `authorize()`, then POSTs to
+`/api/auth/apple/callback` with `{ nonce, mut }` (plus CSRF + Origin per the above).
+
+`POST /api/auth/apple/callback` performs:
+1. Validate Origin + Host + CSRF.
+2. Look up `nonce`. Missing or older than 10 min → `403`.
+3. Persist the MUT to `data/tokens.json`.
+4. **Delete** the nonce entry.
+5. Return a small HTML that calls `window.close()`.
+
+Sweep nonces on the same 60s cadence.
+
+**Long-lived secrets stay server-side.**
+
+The 180-day Apple developer-token JWT and the `.p8` private key **never** appear in
+any browser-facing response, any HTML the server serves, any URL query string, any log
+line, or any error body.
+The browser only ever sees the 10-minute popup token (above).
+All Apple **server-to-Apple** calls use the long-lived JWT.
+
+**No cookies, no session storage.**
+
+The CSRF token in HTML is the only browser-visible server-generated value.
+The server **MUST NOT** set any cookies; `util/log.ts` redacts `Set-Cookie` defensively
+in case a dependency does.
+
+**Phase acceptance.**
+
+Phase 1 implements the network bind, Origin/Host middleware, and CSRF token
+generation + injection + verification framework (validating against `/api/health` is
+trivial — make the framework first).
+Phase 2 implements the OAuth state + PKCE store + sweep.
+Phase 3 implements the popup nonce + short-lived dev token + sweep.
+Each of these gets a Phase AC subcriterion in §13.
 
 ### 11.1 Web UI (the primary surface)
 
@@ -675,6 +855,14 @@ One page, five panels (rendered top to bottom, in order):
    10. **`apple_isrc_lookup`** — a known-good ISRC lookup in the resolved storefront
        returns at least one validated (non-404) candidate
        (proves catalog read + matching plumbing).
+       **Fixture sourcing**: fetch one song from the resolved storefront's top chart
+       (`GET /v1/catalog/{storefront}/charts?types=songs&limit=1`),
+       extract its `attributes.isrc`, then run the lookup against that ISRC.
+       This avoids hardcoded fixtures that drift across storefronts and over time, and
+       proves the chart endpoint works as a side-benefit.
+       If the chart returns no songs or the top song has no ISRC, the check is `skip`
+       with detail explaining why (rare; recover by retrying or by manually re-Connecting
+       Apple Music).
 
    The §6.2 Apple delete-capability probe is **not** part of preflight in v1 —
    see §6.2 and the Amendment log (2026-06-03 #2).
@@ -707,6 +895,21 @@ One page, five panels (rendered top to bottom, in order):
    Rate-limit 403s, transient 401s recovered by refresh, and any 5xx do not invalidate the
    gate.
 
+   **Mid-Operation gate invalidation behavior.**
+   If a downstream call inside a running Operation triggers an invalidation,
+   the **current** Operation continues to completion (it already passed the gate at
+   POST time, and each remaining write will independently refresh+retry on its own 401).
+   The invalidation only prevents the **next** action (catalog refresh or new Operation).
+   This avoids aborting a partially-written transfer over a transient credential blip.
+
+   **UI gate-state refresh.**
+   The UI polls `GET /api/preflight/latest` on these triggers:
+   (a) every full page load,
+   (b) on `window.focus` (covers "user opens UI the next day"),
+   (c) after any 412 response is observed,
+   (d) after the **Check permissions** SSE stream ends.
+   This is the mechanism by which a `doctor` (CLI) pass becomes visible to the UI.
+
 3. **Catalog panel.**
    An **Update Catalog** button fetches the user's playlists from each connected platform
    and stores them in the `catalog` table;
@@ -714,9 +917,17 @@ One page, five panels (rendered top to bottom, in order):
    After a refresh, the Operation form's dropdowns repopulate.
    The panel also shows when each platform's catalog was last fetched.
    This panel is disabled when the preflight gate has not passed.
+   The refresh is incremental (one platform at a time, then playlist-by-playlist within
+   each); the panel shows a per-platform progress bar and is cancellable via a
+   `POST /api/catalog/refresh/cancel` endpoint (which deletes any in-flight refresh state
+   but **keeps** any catalog rows already written).
 4. **Operation form.** Fields:
    - `Source` — radio (Spotify / Apple)
-   - `Destination` — radio (Spotify / Apple), auto-filtered so it cannot equal `Source`
+   - `Destination` — radio (Spotify / Apple), auto-filtered so it cannot equal `Source`.
+     "Auto-filtered" means: when the user picks a Source, the matching Destination radio
+     becomes disabled and, if it was previously selected, flips to the other platform.
+     Liked/Favorites selections reset whenever Source or Destination changes (since
+     they're platform-scoped).
    - `Source Target` — a dropdown of the source's cached playlists
      (with the platform's Liked/Favorites pinned at the top),
      **plus** a free-text input for a playlist id / URL / name.
@@ -726,43 +937,115 @@ One page, five panels (rendered top to bottom, in order):
      The free-text input here accepts an existing playlist (id / URL / name) **or** a new
      name to be created.
      Selecting Favorites/Liked disables the input.
+     When the input contains a free-text **name** (not id or URL), resolution happens
+     server-side at submit per the §9 disambiguation rules (0/1/≥2 matches).
+     A `422` response with a candidate list pops a disambiguation modal; the user picks
+     an existing playlist (or, on the destination side, "Create new with this name").
+   - **Advanced** (disclosure, collapsed by default):
+     - `Rematch` — checkbox, default off.
+       When on, the Operation invalidates and recomputes any cached `tracks` rows for
+       source items (per §12.5), instead of using cached matches.
+       Useful when a platform's catalog has shifted underneath us.
    - **Run** — submits the Operation.
      Disabled when **preflight has not passed**, when source ≡ destination, when either
      side is unauthorized, when both target fields on a side are empty, or when an
      Operation is already running.
+     A disabled Run button shows its block reason on hover.
 5. **Run panel.**
    When an Operation is running or has just finished, this panel shows:
    current stage (resolving source → reading destination → matching → writing → done),
    a progress bar (written / matched out of total),
-   a scrollable event log (one line per match, skip, write, unmatched, failure),
-   and a final summary card with counts and a copyable JSON summary.
-   The panel also has a "Past operations" disclosure that lists prior operations from the
-   ledger.
+   a scrollable event log, and a final summary card with counts and a copyable JSON
+   summary.
+
+   **Event-log rendering.**
+   The log can grow to thousands of lines on a 5000-track Operation.
+   The UI keeps an in-memory aggregate counter (matched / skipped / written / unmatched /
+   failed) and renders only the **last 500** events in the scrollable view; older events
+   are summarized as "+N earlier events — Download full log" which fetches the complete
+   list via `GET /api/operations/:id` (the server returns it from `operation_events`).
+   This keeps the DOM bounded.
+
+   **"Past operations" disclosure** lists prior operations from the ledger with
+   timestamp, source/destination summary, status, and a click-through to that
+   operation's full event log (via `/api/operations/:id/events`, which replays from the
+   ledger).
+   Interrupted operations (status `interrupted`, set by the startup sweep per §12.5)
+   are shown with a hint: "Run the same Operation again — already-written items will be
+   skipped automatically."
+
+   **Popup OAuth failure handling.**
+   The auth panel tracks the popup window reference after opening it.
+   If the popup is blocked at open → show "Your browser blocked the popup; allow popups
+   for 127.0.0.1:8888 and try again."
+   If the popup closes without a callback being recorded → after a 10s grace period the
+   UI clears the in-progress state and re-enables the Connect button with
+   "Connect attempt did not complete; try again."
+   The server-side `state`/nonce store entry expires on its own 10-minute TTL.
 
 ### 11.2 HTTP API (consumed by the UI; documented for diagnostics)
 
+All POSTs require `X-CSRF-Token` (matches the server-start token in `<meta name="csrf-token">`)
+and a same-origin `Origin: http://127.0.0.1:8888` header per §11.0.
+Missing/wrong CSRF or Origin → `403`.
+
 ```
 GET    /api/health                  liveness
-GET    /api/auth/status             { spotify: {connected, expiresAt?}, apple: {connected, expiresAt?} }
+GET    /api/auth/status             { spotify: {connected, expiresAt?, scope?},
+                                      apple:   {connected, expiresAt?, storefront?} }
 POST   /api/auth/spotify/start      returns { authorizeUrl } the UI opens in a popup
-GET    /auth/spotify/callback       Spotify redirects here; server stores tokens; closes popup
-POST   /api/auth/apple/start        returns { developerToken } for MusicKit JS in the popup
-POST   /api/auth/apple/callback     popup POSTs the MUT here; server stores it; closes popup
+                                    (server generates+stores state+code_verifier per §11.0)
+GET    /auth/spotify/callback       Spotify redirects here; server validates state; stores
+                                    tokens + scope; serves auto-close HTML
+POST   /api/auth/apple/start        returns { developerToken, nonce }; developerToken is the
+                                    short-lived (10min) JWT per §11.0; nonce binds /start to
+                                    /callback
+POST   /api/auth/apple/callback     body: { nonce, mut }; validates nonce; stores MUT;
+                                    serves auto-close HTML
 GET    /api/preflight/latest        latest preflight_runs row + its checks; null if none
 POST   /api/preflight/run           starts a new preflight; returns { id }; 409 if one is running
 GET    /api/preflight/:id           a specific preflight_runs row + its checks
-GET    /api/preflight/:id/events    SSE: per-check live events (and replay from the ledger)
+GET    /api/preflight/:id/events    SSE: per-check live events (and replay from the ledger);
+                                    supports `Last-Event-ID` header (= last seen seq) for
+                                    reconnects — server replays events with seq > last-seen
 GET    /api/catalog                 current cached catalog, both platforms
-POST   /api/catalog/refresh         kicks off a refresh of both connected platforms
+POST   /api/catalog/refresh         kicks off an incremental refresh of both connected platforms;
                                     returns 412 if preflight gate has not passed
-GET    /api/catalog/events          SSE: refresh progress
-POST   /api/operations              body: { source, destination, sourceTarget, destinationTarget }
-                                    returns { id }; 409 if another Operation is running;
-                                    412 if preflight gate has not passed
+POST   /api/catalog/refresh/cancel  cancels an in-flight refresh; already-fetched rows kept
+GET    /api/catalog/events          SSE: refresh progress; per-platform per-playlist events
+POST   /api/operations              body: { source, destination, sourceTarget, destinationTarget,
+                                              rematch?: boolean }
+                                    returns { id } on 201;
+                                    409 if another Operation is running;
+                                    412 if preflight gate has not passed;
+                                    422 with { side, candidates: [...] } if a free-text target
+                                        name matches ≥2 existing playlists (see §9
+                                        disambiguation rules); resubmit with the chosen
+                                        playlist id in sourceTarget/destinationTarget
 GET    /api/operations              recent operations list (from ledger)
-GET    /api/operations/:id          operation record + summary
-GET    /api/operations/:id/events   SSE: live events (and replay from the ledger on reconnect)
+GET    /api/operations/:id          operation record + summary (with full event log)
+GET    /api/operations/:id/events   SSE: live events (and replay from the ledger on reconnect);
+                                    supports `Last-Event-ID` (= last seen `operation_events.seq`)
+                                    — on reconnect, server emits all events with seq >
+                                    last-seen, then continues live
 ```
+
+**SSE conventions** (apply to all SSE endpoints above):
+
+- `Content-Type: text/event-stream`; `Cache-Control: no-cache`; `Connection: keep-alive`.
+- Each event:
+  ```
+  id: <numeric seq>
+  event: <type>
+  data: <single-line JSON>
+  ```
+  The `id:` line is the row's `seq` from the relevant `_events` table, enabling the
+  standard `Last-Event-ID` resumption protocol the browser EventSource implements.
+- Server keeps the stream open until the run is `done` (final event with `type: 'done'`
+  for operations, or `type: 'complete'` for preflight/catalog refresh), then closes.
+- On reconnect (browser auto-reconnects EventSource), the server checks `Last-Event-ID`
+  and replays from there; if the run has finished, all remaining events are replayed and
+  the stream is closed cleanly.
 
 ### 11.3 Minimal CLI
 
@@ -796,23 +1079,82 @@ A `doctor` pass counts for the UI's gating policy, and vice versa.
   Verify this explicitly in Phase 7 acceptance.
 - **Resumability:** crash mid-Operation → restart skips work already recorded in the
   ledger (and the next read of `D` reflects whatever was already written).
-- **No secret leakage:**
-  `util/log.ts` must redact tokens, keys, and auth headers.
-  Never log a full request with `Authorization` / `Music-User-Token`.
-  Never echo secrets to chat.
+- **No secret leakage.**
+  `util/log.ts` MUST redact, in this order, before any string reaches stdout, stderr, a
+  file, an HTTP response, or an SSE payload:
+  - Request/response **headers**: `Authorization`, `Music-User-Token`, `Set-Cookie`,
+    `Cookie`, `X-Apple-Music-User-Token`.
+  - Request/response **body** fields (case-insensitive JSON key match):
+    `access_token`, `refresh_token`, `developerToken`, `developer_token`,
+    `musicUserToken`, `music_user_token`, `id_token`, `code_verifier`, `state`, `nonce`,
+    `code` (when appearing in an OAuth context — practical heuristic: any URL containing
+    `/oauth/` or `/auth/` or a body matching the token-exchange shape).
+  - Query-string parameters with any of the names above.
+  - Any string that **looks** like `Bearer <40+chars>` regardless of context.
+  - Any string matching `-----BEGIN .* PRIVATE KEY-----`.
+  - The configured `APPLE_TEAM_ID` and `APPLE_KEY_ID` values (loaded once from env at
+    log-module init).
+  Redaction substitutes `<redacted:<kind>>`. Test fixtures live in `util/log.test.ts`.
+- **Preflight `detail` JSON allow-lists.**
+  Each preflight check has a fixed schema for its `detail` column — implementer ships
+  these as constants in `preflight/checks.ts`. The runner enforces "no extra fields"
+  before insert. Allow-lists for v1:
+  ```
+  env               → { missing_keys: string[], key_file_readable: boolean }
+  spotify_token     → { source: 'fresh'|'refreshed', expires_in_seconds: number }
+  spotify_scopes    → { missing_scopes: string[], granted_count: number }
+  spotify_me        → { user_id_hash: string }                    -- SHA256(user.id)[0:12]
+  spotify_search    → { results_returned: number }
+  apple_dev_token   → { alg: 'ES256', exp_days_remaining: number, signed: boolean }
+                                                                  -- never iss/kid (=Team/Key ID)
+  apple_mut         → { accepted: boolean }
+  apple_storefront  → { storefront: string }                      -- e.g. 'us'
+  apple_library_read → { playlists_returned: number }
+  apple_isrc_lookup → { fixture_isrc: string, validated_candidates: number }
+                                                                  -- ISRC is public
+  ```
+  `failure` rows additionally carry `{ error_class, error_message_safe }` where
+  `error_message_safe` is the platform's error message **after** redaction.
 - **No personal data in git:** `data/` is gitignored;
   it contains playlist contents, tokens, and the per-Operation event log.
-- **Token storage:** `data/tokens.json`, gitignored, restrictive file permissions
-  (0600 where the OS supports it).
+- **File permissions.** Created with restrictive modes at first write; verified at server
+  startup (warn-and-fix if drifted):
+  - `data/tokens.json` → `0600`.
+  - `data/ledger.sqlite`, `data/ledger.sqlite-wal`, `data/ledger.sqlite-shm` → `0600`.
+  - `secrets/AuthKey_*.p8` → `0600`. (Apple's downloaded `.p8` is `0644` by default;
+    `chmod 0600` it on first read, or refuse to run if it's group/world readable.)
+  - `data/` and `secrets/` directories → `0700`.
+  (POSIX only. On Windows these are no-ops; document the limitation in the README.)
 
 ### 12.5 Self-healing (runtime)
 
 The tool must keep itself working as the world drifts, without a human babysitting it:
 
 - **Schema migrations.**
-  The ledger carries a `schema_version`; on startup, migrate forward automatically.
+  The ledger carries a `schema_version`; on startup, migrate forward automatically per the
+  semantics in §9 ("Schema-version semantics").
   Never make the human hand-edit the database.
   Adding columns/tables later is expected — that's the implementation tier evolving (§0).
+- **Startup reconciliation sweep.**
+  On server start, `db.ts` runs a transaction that:
+  - For every `operations` row with `status='running' AND finished_at IS NULL`:
+    mark `status='interrupted'`, set `finished_at = now()`, and append a final event row
+    `{ type: 'interrupted', payload: { reason: 'server_restart_during_run' } }`.
+  - For every `preflight_runs` row with the same shape: mark `status='interrupted'`,
+    set `finished_at = now()`.
+  This guarantees the partial unique indexes (§9) never have a stranded "running" row
+  blocking the next start, and the UI's Past-Operations list never shows perpetual
+  "running" entries.
+  Re-running an interrupted Operation **is** the resume mechanism: the new run's read of
+  `D` reflects whatever was written before the crash, so already-written items naturally
+  skip (§8 idempotency).
+- **Resume soundness.**
+  The destination read in §8 step 2 might lag behind very recent writes due to platform
+  eventual consistency (Apple library reads can lag library writes by several seconds).
+  To prevent duplicate appends after a crash-then-resume, the runner unions `D` with the
+  set of `write`-type rows in `operation_events` from prior runs of the same
+  `(source, destination, sourceTarget, destinationTarget)` tuple before computing the
+  skip set. `operation_events` is the canonical record of what was definitely written.
 - **Capability re-probing.**
   Re-run any gated capability before acting on it, and on a sensible cadence via
   `doctor` / the UI's Permissions panel.
@@ -830,11 +1172,17 @@ The tool must keep itself working as the world drifts, without a human babysitti
   re-verify before continuing.
   Never let drift silently corrupt the ledger.
 - **Match revalidation.**
-  Expose a "rematch" option (an Advanced toggle on the Operation form, or a
-  `?rematch=true` query param on `POST /api/operations`) that invalidates cached mappings
-  and re-resolves (e.g. when a catalog's canonical id changes).
-  A stale mapping whose target id now 404s should be detected and re-resolved
-  automatically.
+  Two paths:
+  - **User-triggered**: the Operation form's Advanced **Rematch** toggle (§11.1 panel 4) or
+    `POST /api/operations` body field `rematch: true` (§11.2).
+    When set, the runner **deletes** cached `tracks` rows whose `identity_key` matches the
+    source items of this Operation before resolution, forcing live re-lookup for each.
+    Useful when a platform's catalog has shifted underneath us.
+  - **Auto**: when the runner attempts to write using a cached `apple_catalog_id` /
+    `spotify_id` and the platform returns 404 (the cached id no longer exists), the runner
+    invalidates that one `tracks` row and re-resolves that single item via the matcher
+    (§7) before retrying the write. Logged as a `match` event with a `revalidated: true`
+    marker so the human can see why a re-run wasn't a no-op.
 - **Graceful degradation.**
   A single failed track add is recorded as a `failed` action and retried on the next run;
   it never aborts the whole Operation.
@@ -847,33 +1195,68 @@ The tool must keep itself working as the world drifts, without a human babysitti
 Each phase ends with a commit (see `CLAUDE.md` git workflow) and a `PROGRESS.md` entry.
 
 - **Phase 0 — Scaffold.**
-  Repo, `git init`, `.gitignore` (✅ before any other file), `package.json`, `tsconfig`,
-  ESLint/Prettier, `.env.example`, an empty `web/index.html` placeholder, README skeleton,
+  Repo, `git init`, `.gitignore` (✅ before any other file),
+  `package.json` (with `"build": "tsc --noEmit"` and `"start": "tsx src/server.ts"`),
+  `tsconfig.json` (`strict: true`, `module: NodeNext`, `target: ES2022`, `lib: ['ES2023']`,
+  `moduleResolution: NodeNext`, `noUncheckedIndexedAccess: true`),
+  ESLint/Prettier configs (Prettier with `proseWrap: preserve` to match the existing
+  `<!-- @format -->` directive in docs),
+  `.env.example` (keys per §4), an empty `web/index.html` placeholder, README skeleton,
   and `PROGRESS.md`.
-  **AC:** `npm run build` passes; `git status` shows no secret/data paths trackable;
+  **AC:** `npm install` then `npm run build` exits 0 against an empty `src/` tree
+  (tsc on no input is a no-op);
+  `git status` shows no secret/data paths trackable;
   the obsolete `sync.config.example.json` has been removed (per §10).
-- **Phase 1 — Ledger + HTTP server skeleton.**
-  `config.ts`, `ledger/db.ts` with the §9 schema and forward-migration runner,
+- **Phase 1 — Ledger + HTTP server skeleton + security framework.**
+  `config.ts`, `ledger/db.ts` with the §9 schema + WAL/foreign-keys/synchronous PRAGMAs +
+  forward-migration runner + startup reconciliation sweep (§12.5),
   `http/server.ts` serving `/api/health` and static `/web/` assets,
   `src/server.ts` entrypoint.
-  **AC:** `npx tsx src/server.ts` starts the server, the UI loads in a browser and shows
-  the health-check result, `data/ledger.sqlite` is created with all tables and a
-  `schema_version` row.
+  Implement the §11.0 framework: bind to `127.0.0.1` only (fail loudly on bind error);
+  middleware that enforces `Host` on all routes and `Origin` + `X-CSRF-Token` on POSTs;
+  per-server-start CSRF token (32-byte base64url, embedded as `<meta>` in served HTML).
+  **AC:**
+  1. `npx tsx src/server.ts` starts; `data/ledger.sqlite` is created with all tables,
+     all partial unique indexes, and `schema_version` row at version 1.
+  2. `GET http://127.0.0.1:8888/api/health` from the served UI returns 200; the same
+     request from `http://localhost:8888` returns 403 (Host mismatch — `localhost`
+     ≠ `127.0.0.1`).
+  3. `POST /api/health` (hypothetical for the test) without `X-CSRF-Token` returns 403;
+     with the wrong token returns 403; with the served token returns the expected
+     response.
+  4. Restarting the server while a `running` row exists in `operations` or
+     `preflight_runs` (manually seeded) results in those rows being marked `interrupted`
+     with a final event row appended (§12.5).
 - **Phase 2 — Spotify auth + read.**
   PKCE flow wired through the UI's auth panel; loopback callback served by the same HTTP
   server; refresh; read client (playlists, playlist tracks, Liked).
+  Implement the §11.0 OAuth `state` + `code_verifier` server-side store (in-memory map,
+  10-minute TTL, swept every 60s) and use it in `/api/auth/spotify/start` and
+  `/auth/spotify/callback`.
   Persist the `scope` field returned at token exchange (and at each refresh) into
   `data/tokens.json` so `spotify_scopes` in Phase 5 has data to read.
-  **AC:** after ⏸A/⏸B, the UI shows Spotify connected;
-  the read client returns the user's Spotify playlists + Liked with ISRCs on a sample
-  tracklist.
+  **AC:**
+  1. After ⏸A/⏸B, the UI shows Spotify connected; the read client returns the user's
+     Spotify playlists + Liked with ISRCs on a sample tracklist.
+  2. `SPOTIFY_REDIRECT_URI` matches byte-for-byte across `.env`, `.env.example` (§4),
+     `/api/auth/spotify/start` URL construction, and the `/auth/spotify/callback` route
+     registration. Implementer asserts this via a unit test that compares the four
+     strings.
+  3. A callback with a `state` that's not in the in-memory store returns 403; a callback
+     with an expired (>10min) state returns 403 and the entry is purged.
 - **Phase 3 — Apple auth + read.**
   Dev-token signing, MusicKit page at `/auth/apple/musickit`, MUT capture POSTed back to
   the server; storefront resolution; read client (library playlists, Favorites, catalog
   search, ISRC lookup).
-  **AC:** after ⏸C/⏸D, the UI shows Apple connected;
-  storefront resolves and the read client returns library playlists + Favorites + a known
-  ISRC lookup.
+  Implement the §11.0 popup nonce store and the **short-lived (10-minute)** developer
+  token minted just for the popup; the 180-day token stays server-side.
+  **AC:**
+  1. After ⏸C/⏸D, the UI shows Apple connected; storefront resolves and the read client
+     returns library playlists + Favorites + a known ISRC lookup.
+  2. The developer token in the popup HTML (inspectable via DevTools "View page source")
+     decodes to a JWT with `exp` ≤ 10 minutes from now.
+  3. A POST to `/api/auth/apple/callback` with a nonce that's not in the store, or older
+     than 10 minutes, returns 403; nonces are consumed exactly once.
   (The §6.2 delete-capability probe is **deferred** per the 2026-06-03 amendment — do not
   implement it in v1.)
 - **Phase 4 — Matching.**
@@ -914,23 +1297,50 @@ Each phase ends with a commit (see `CLAUDE.md` git workflow) and a `PROGRESS.md`
   6. A `doctor` pass written from the CLI satisfies the UI's gate
      (the UI re-fetches `/api/preflight/latest` and the gate opens), and vice versa.
 - **Phase 6 — Catalog cache + Operation form UI.**
-  `catalog/catalog.ts` + `/api/catalog/*` endpoints + SSE refresh stream;
+  `catalog/catalog.ts` + `/api/catalog/*` endpoints + SSE refresh stream
+  (incremental, cancellable per §11.1);
   the UI's Operation form populates dropdowns from the cache,
-  enforces source ≠ destination, and disables the free-text input when Liked/Favorites is
-  selected.
-  **AC:** clicking **Update Catalog** refreshes both sides with live progress;
-  the dropdowns populate;
-  the Run button enables only when preflight has passed, both targets are resolved,
-  and an Operation is not already running.
-- **Phase 7 — Operation runner + live status.**
+  enforces source ≠ destination (auto-filter + reset of Liked/Favorites on change per
+  §11.1),
+  disables the free-text input when Liked/Favorites is selected,
+  and surfaces the §9 disambiguation modal on the UI when the server returns 422.
+  **AC:**
+  1. Clicking **Update Catalog** refreshes both sides with live per-platform progress;
+     the dropdowns populate from the catalog table.
+  2. Clicking **Cancel** mid-refresh stops further fetches; already-stored catalog rows
+     remain (no rollback).
+  3. The Run button enables only when preflight has passed, both targets are resolved,
+     and an Operation is not already running.
+  4. A free-text destination name matching ≥2 existing playlists returns 422 with the
+     candidate list; the UI shows a disambiguation modal; resubmitting with a chosen id
+     succeeds.
+- **Phase 7 — Operation runner + live status + rematch.**
   `operation/runner.ts` executes the additive transfer per §8,
-  emits SSE events through `/api/operations/:id/events`,
+  emits SSE events through `/api/operations/:id/events` with the `id:` (= `seq`)
+  protocol from §11.2,
   persists the event log + summary to the ledger;
-  the Run panel streams status.
-  **AC:** an Operation moves missing tracks from S to D and skips items already in D;
-  a second run of the same Operation writes zero (idempotent);
-  a mid-run failure is recorded and does not abort;
-  reconnecting to the SSE stream replays prior events from the ledger.
+  the Run panel streams status with the §11.1 event-log virtualization.
+  Implements the user-triggered **rematch** path from §12.5 (the form's Advanced toggle
+  and the POST body's `rematch: true`).
+  Implements the §12.5 resume-soundness union (read of `D` unioned with prior
+  `operation_events.write` rows for the same Operation tuple).
+  **AC:**
+  1. An Operation moves missing tracks from S to D and skips items already in D.
+  2. A second run of the same Operation writes zero (idempotent).
+  3. A mid-run failure on a single track is recorded as a `failed` action; the Operation
+     continues.
+  4. Killing the server mid-Operation (and restarting) leaves the prior row at
+     `status='interrupted'`; re-submitting the same Operation skips already-written items
+     **even if the platform's destination read hasn't caught up yet** (resume union with
+     `operation_events.write`).
+  5. Setting `rematch: true` on an Operation whose source items already have cached
+     `tracks` rows causes the runner to re-resolve them (verified by a `match` event with
+     `from_cache: false` for items that previously had `from_cache: true`).
+  6. Reconnecting to the SSE stream with `Last-Event-ID: N` replays only events with
+     seq > N, then continues live.
+  7. Auto-revalidation: when a write fails with 404 on a cached target id, the runner
+     invalidates that one `tracks` row, re-resolves via §7, and retries; logged as a
+     `match` event with `revalidated: true`.
 - **Phase 8 — UX polish.**
   Helpful errors at each pause point (named env var, exact next click);
   the UI surfaces a reconnect prompt on 401 (in addition to the auto-invalidation from
@@ -954,17 +1364,27 @@ Each phase ends with a commit (see `CLAUDE.md` git workflow) and a `PROGRESS.md`
   all checks pass on a correctly configured environment;
   the gating policy (latest pass within 24h, refresh-aware auto-invalidation) prevents
   catalog refresh and Operations whenever it should.
+- **§11.0 security model is in place**: server binds to 127.0.0.1 only;
+  Origin/Host validation rejects cross-origin POSTs; CSRF token required and enforced
+  on every POST; OAuth state + PKCE verifier stored server-side with 10-minute TTL;
+  Apple popup uses a short-lived (≤10min) developer token bound by nonce; the 180-day
+  Apple JWT never appears in any browser-facing response.
 - The web UI can run, end-to-end, an Operation from a real Spotify playlist to a real
   Apple Music playlist **and** the symmetric Apple → Spotify direction, verified by the
   human.
   At least one of those Operations uses Liked/Favorites on one side.
 - Re-running the same Operation with no source changes writes nothing (idempotent).
+- Killing the server mid-Operation and restarting leaves no orphaned `status='running'`
+  rows; the prior row is `interrupted`; re-submitting the same Operation completes the
+  remaining work without duplicating already-written items.
 - `doctor` (CLI) and the UI's Permissions panel agree —
-  a `doctor` pass satisfies the UI's gate, and a UI pass shows up in `doctor`'s history.
+  a `doctor` pass satisfies the UI's gate (visible to the UI within the polling cadence
+  per §11.1), and a UI pass shows up in `doctor`'s history.
 - README explains setup (incl. the four credential pause points + the preflight step),
   how to launch the UI, and the additive-only / no-removals posture honestly.
 - A secrets audit confirms the public repo is clean:
-  no `.p8`, no `.env`, no tokens, no `data/`, no `web/` assets containing personal data.
+  no `.p8`, no `.env`, no tokens, no `data/`, no `web/` assets containing personal data,
+  no real `APPLE_TEAM_ID` / `APPLE_KEY_ID` in any tracked file.
 
 ---
 
@@ -980,7 +1400,8 @@ and if they do, record that too, attributed to the human.
 | _seed_     | —                                                 | Initial blueprint authored                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Starting point                                                                                                                                                                                                   | n/a                                                                                                                                                                                                                                                                                                  |
 | 2026-06-03 | preamble, §1, §3, §8, §9, §10, §11, §13, §14, §15 | **Pivot from CLI bidirectional sync → local web UI for one-time additive Operations** (human-directed). Operation = `{source, destination, sourceTarget, destinationTarget}`; targets ∈ `{playlist, liked, favorites}`. Removed `sync_pairs`/`baseline` tables and the three-way-merge engine; removed removal propagation and `--allow-removals`; removed `sync.config.json` (operations are ad-hoc in the UI). Added `catalog`, `operations`, `operation_events` tables; HTTP server with SSE; `web/` vanilla-JS UI. Kept all auth, matching, API-hazards, and reliability/redaction design.                                                                                                       | Human asked for a web UI driving one-time transfers with live status and a catalog-backed playlist picker. The simpler unidirectional model fits the new UX and removes a large class of reconciliation hazards. | Non-destruction strengthened (no removal code path at all in v1). Secrets/privacy unchanged. Truthfulness unchanged. Auditability preserved via `operations` + `operation_events`. Scope still bounded (single-user, local).                                                                         |
 | 2026-06-03 | §1, §3, §9, §11, §13, §14, §15                    | **Added a "Check permissions" preflight that gates Catalog and Operations** (human-directed). New 11-check sequence (env, both tokens, Spotify scopes, sample reads on each side, ISRC lookup, Apple delete-probe) runs from the UI's Permissions panel and from the CLI `doctor` via shared `preflight/runner.ts`. Catalog refresh + Operation runs are disabled UI-side and refused (412) server-side until the latest `preflight_runs` row is `passed`. A 401/403 from any downstream call auto-invalidates the pass. Added `preflight_runs` + `preflight_checks` tables and `src/preflight/`. Inserted as new Phase 5; pushed Catalog/UI to 6, Operation runner to 7, Polish to 8, Publish to 9.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Human asked to fail fast at the door — exercise every credential, scope, and capability the tool relies on before any catalog or Operation action, instead of discovering a missing scope mid-Operation.                                                                                              | Non-destruction unchanged (preflight only reads, plus the throwaway delete-probe per §6.2 which cleans up after itself). Secrets/privacy unchanged (`detail` column must be redaction-safe). Truthfulness unchanged (preflight is the runtime verifier). Auditability strengthened. Scope unchanged.                                |
-| 2026-06-03 | §1, §6.2, §9, §11.1, §13, §14, §15                | **Preflight design tightened after a validation pass on five concerns**: (1) gate now requires latest `passed` AND `finished_at` within 24h (soft expiry catches overnight drift); (2) **`apple_delete_probe` removed from v1 preflight** — v1 deletes nothing, so the probe is deferred along with removals (§6.2 now states this explicitly); the check list is now 10, not 11. (3) Auto-invalidation is refresh-aware: `util/http.ts` attempts one token refresh / dev-token re-sign + retry; only the second 401, or a 403 whose body indicates a scope problem (not rate-limit), invalidates the gate (`trigger='auto-401'` or `'auto-403-scope'`). (4) `spotify_scopes` is implemented by reading the granted scope list **persisted in `data/tokens.json`** from the OAuth `scope` response field — Spotify has no public token-introspection endpoint for PKCE clients, and inventing one would violate the truthfulness invariant. (5) Ten checks remain fine-grained but are presented in three UI groups (Environment / Spotify / Apple), env-first, Spotify and Apple groups run in parallel, intra-group skips when a prerequisite fails. Phase 5 AC rewritten as six numbered subcriteria. | Human asked to deeply validate and resolve the five open concerns I raised against the previous amendment. Each resolution favors safety (fail-fast, no invented endpoints), accuracy (refresh-aware invalidation reduces false-positives), and clarity (grouped UI, scoped detail messages). | Non-destruction unchanged. Secrets/privacy unchanged (scope list persisted alongside refresh token in already-gitignored `data/tokens.json`). Truthfulness **strengthened**: scope-check implementation explicitly forbids inventing an introspection endpoint; delete-probe deferral removes a latent untested code path. Auditability unchanged. Scope unchanged. |
+| 2026-06-03 | §1, §6.2, §9, §11.1, §13, §14, §15                | **Preflight design tightened after a validation pass on five concerns**: (1) gate now requires latest `passed` AND `finished_at` within 24h (soft expiry catches overnight drift); (2) **`apple_delete_probe` removed from v1 preflight** — v1 deletes nothing, so the probe is deferred along with removals (§6.2 now states this explicitly); the check list is now 10, not 11. (3) Auto-invalidation is refresh-aware: `util/http.ts` attempts one token refresh / dev-token re-sign + retry; only the second 401, or a 403 whose body indicates a scope problem (not rate-limit), invalidates the gate (`trigger='auto-401'` or `'auto-403-scope'`). (4) `spotify_scopes` is implemented by reading the granted scope list **persisted in `data/tokens.json`** from the OAuth `scope` response field — Spotify has no public token-introspection endpoint for PKCE clients, and inventing one would violate the truthfulness invariant. (5) Ten checks remain fine-grained but are presented in three UI groups (Environment / Spotify / Apple), env-first, Spotify and Apple groups run in parallel, intra-group skips when a prerequisite fails. Phase 5 AC rewritten as six numbered subcriteria.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Human asked to deeply validate and resolve the five open concerns I raised against the previous amendment. Each resolution favors safety (fail-fast, no invented endpoints), accuracy (refresh-aware invalidation reduces false-positives), and clarity (grouped UI, scoped detail messages). | Non-destruction unchanged. Secrets/privacy unchanged (scope list persisted alongside refresh token in already-gitignored `data/tokens.json`). Truthfulness **strengthened**: scope-check implementation explicitly forbids inventing an introspection endpoint; delete-probe deferral removes a latent untested code path. Auditability unchanged. Scope unchanged.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 2026-06-03 | §3, §4, §9, §11.0 (new), §11.1, §11.2, §12, §12.5, §13, §14, §15 | **Multi-persona validation pass → 8 amendments** (human-directed; ran a 6-persona adversarial workflow then resolved every verified finding). Substantive changes: (1) fixed `SPOTIFY_REDIRECT_URI` mismatch in §4 (was `/callback`, now `/auth/spotify/callback` matching every other reference) + Phase 2 AC adds verbatim-agreement check; (2) **new §11.0 "Local-server security model"**: 127.0.0.1-only bind, Host/Origin validation on all routes, per-server-start CSRF token, OAuth `state` + PKCE `code_verifier` in-memory store with 10min TTL, Apple popup nonce + **short-lived (10min) developer token** so the 180-day JWT never leaves the server; Phase 1/2/3 ACs updated to implement these in sequence; (3) §12 expanded redaction list (developerToken, OAuth fields in bodies + query strings, BEGIN PRIVATE KEY pattern, configured Team/Key ID values) + per-check `preflight_checks.detail` allow-lists (no Team/Key ID leakage via `iss`/`kid`) + file perms (0600 on `.p8`, ledger, ledger-wal/shm; 0700 on `secrets/` and `data/`); (4) §9 added partial unique indexes `WHERE status='running'` on `operations` + `preflight_runs`, `finished_at` indexes, NOT NULL where appropriate, sentinels `__liked__`/`__favorites__` for `catalog.external_id`, `interrupted` status; §12.5 added startup reconciliation sweep + resume-soundness union with `operation_events.write` rows (handles platform eventual consistency); (5) implemented user-triggered rematch (Advanced toggle in §11.1, body field in §11.2, Phase 7 AC) and auto-revalidation on 404; (6) §11.1 specified ISRC fixture sourcing (storefront charts → top song → ISRC lookup); (7) §9 + §11.1 + §11.2 specified free-text duplicate-name disambiguation (0/1/≥2 matches → create/auto/422 modal); (8) coherence sweep: §3 `sync.sqlite` → `ledger.sqlite`, §9 dropped `'warn'` status, README/CLAUDE.md stale-reference cleanup; plus folded-in low-impact fixes — SSE `Last-Event-ID` reconnect protocol, UI poll-on-focus for gate state, event-log virtualization (cap at last 500 + aggregate counters), popup-failure UX (10s grace), mid-Operation gate-invalidation behavior (current Operation continues, next blocked), WAL/foreign_keys/synchronous PRAGMAs, schema_version semantics, Phase 0 `npm run build` semantics. | Human asked to deeply validate and resolve every finding from the 6-persona workflow (`wf_cc3ea7a4-e8f`). 0 blockers, 2 high, 12 medium, 14 low; all 28 verified findings either incorporated or formally deferred. Goal: reach READY-TO-BUILD with no known spec gaps that would cause first-run failure or guaranteed mid-build amendments. | Non-destruction unchanged. Secrets/privacy **strengthened**: full §11.0 security model, expanded redaction, file perms, short-lived browser-facing dev token. Truthfulness unchanged (no new API claims; sentinels and ISRC fixture sourcing are local). Auditability **strengthened**: startup sweep guarantees no orphaned `running` rows; `operation_events` canonical for resume; SSE `Last-Event-ID` enables clean replay. Scope unchanged (single-user, local). |
 
 > Keep entries terse — one line each.
 > The point is a traceable history of _why the design is what it is now_,

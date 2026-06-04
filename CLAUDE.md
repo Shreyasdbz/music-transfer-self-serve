@@ -117,7 +117,7 @@ Ideally: one interruption for Spotify (⏸A then ⏸B back-to-back), one for App
 
 - **Write `.gitignore` first**, in Phase 0, before creating anything else.
   It must cover `.env`, `*.p8`, `secrets/`, `data/`, `tokens.json`, `*.sqlite*`,
-  `node_modules/`, and `dist/`.
+  `node_modules/`, `dist/`, and `.DS_Store` (macOS noise).
   Confirm with `git status` that none of these are trackable.
 - **Never** put a real secret in a tracked file.
   Templates (`.env.example`) contain blanks or obviously fake values only.
@@ -155,7 +155,7 @@ Ideally: one interruption for Spotify (⏸A then ⏸B back-to-back), one for App
 - **Idempotency is a feature, not a hope.**
   Check the destination set (and the ledger) before writing.
   Re-running the same Operation with no upstream changes must perform zero writes —
-  test this in Phase 6.
+  test this in Phase 7.
 - **Determinism.**
   Disambiguation and scoring must produce the same choice on every run for the same inputs.
   No randomness in selection.
