@@ -62,9 +62,13 @@ export function registerCatalogRoutes(): void {
     const emitter = subscribeCatalog();
     let closed = false;
 
+    // No `id:` line: catalog progress is transient (no replay store, and the
+    // seq counter resets each refresh — a non-monotonic id would poison the
+    // browser's Last-Event-ID on reconnect). The stream is purely live; a
+    // reconnecting client just starts following the current refresh.
     const onEvent = (evt: CatalogEvent): void => {
       if (closed) return;
-      res.write(`id: ${evt.seq}\nevent: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`);
+      res.write(`event: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`);
       if (evt.type === "complete" || evt.type === "cancelled") {
         closed = true;
         emitter.off("event", onEvent);

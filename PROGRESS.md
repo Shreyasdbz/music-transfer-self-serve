@@ -928,3 +928,38 @@ Keep entries factual and terse.
 - Next: Phase 7 — Operation runner. The `POST /api/operations` 501 flips to a real run:
   read source set, match (Phase 4), write missing to destination, SSE status, ledger
   event log; the resolved-target shapes this route already returns are exactly its input.
+
+### 2026-06-04 — Phase 6 validation sweep: 9 confirmed (0 high, 2 medium, 7 low) → fixed
+
+- 5-persona validation (security, correctness, blueprint, regression, architecture) over
+  Phase 6, adversarially verified. 11 raw → **9 confirmed (0 high, 2 medium, 7 low)**. The
+  two mediums were the SAME issue, reported 4× total. Unique ≈6. All addressed:
+  - **§9 live-library half (medium ×2, the headline finding).** `resolveTarget` searched
+    only the catalog cache; §9 mandates "cache AND live library". A stale/empty cache
+    would miss a real playlist → duplicate-create on the destination side or a false
+    `source_playlist_not_found`. Fixed: `resolveTarget` is now async and unions
+    `findCatalogByName` with a live `listMyPlaylists`/`listLibraryPlaylists` name search
+    (deduped by id, cache wins; degrades to cache-only on a live error). **Live-verified
+    with the catalog cache CLEARED: "Baraat 🐎" still resolved to the real Spotify
+    playlist via the live library — not duplicated.**
+  - **#3 a name that looks like an id bypassed disambiguation (low).** A 22-char string or
+    a "p."/"pl." name was parsed as an id, skipping §9. Restructured: a URL is an
+    unambiguous id; otherwise name resolution runs FIRST, and a bare-id-looking token only
+    becomes an id on a 0-name result. Names now take precedence.
+  - **#4 liked/favorites accepted for the wrong platform (low).** `resolveTarget` now
+    binds kind↔platform (Spotify=liked, Apple=favorites) and 422s a mismatch.
+    Live-verified: favorites@spotify → 422, liked@apple → 422.
+  - **#1 catalog SSE `error` event emitted the raw message (low, §12 gap).** A non-JSON
+    2xx body would surface ~10 raw chars via a SyntaxError message. Now `String(redact())`
+    before it hits the SSE wire, mirroring the preflight runner.
+  - **#9 catalog SSE used a per-refresh-resetting `id:` (low).** Catalog progress is
+    transient (no replay store, non-monotonic seq). Dropped the `id:` line so a
+    reconnecting EventSource doesn't resume from a meaningless id.
+  - **#7 catalogStore.test SIGINT double-restore (low).** Added a `restored` latch +
+    `existsSync(SNAP)` guard so a Ctrl-C-then-exit double-invocation can't throw ENOENT
+    from an exit handler.
+- Tests +12 (`routes_operations.test.ts`: parseUrl URL-vs-name-vs-bare-id, looksLikeBareId
+  for both platforms). Live re-verified: live-library resolve (cleared cache), platform↔kind
+  422s, brand-new→create, dropdown-id passthrough. **Suite: 262/262 PASS** across 12 suites.
+  Lint + build clean. No invariant weakened; the §9 live-library fix strengthens
+  non-duplication. Ledger restored from backup after the live run.

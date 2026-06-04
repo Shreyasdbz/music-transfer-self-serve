@@ -9,7 +9,7 @@
 // EventEmitter consumed by the /api/catalog/events SSE handler.
 
 import { EventEmitter } from "node:events";
-import { log } from "../util/log.js";
+import { log, redact } from "../util/log.js";
 import { getConnectedState as spotifyConnected } from "../auth/spotify.js";
 import { getConnectedState as appleConnected } from "../auth/apple.js";
 import { listMyPlaylists, getSavedTracksTotal, playlistTrackCount } from "../clients/spotify.js";
@@ -169,7 +169,10 @@ export function startCatalogRefresh(): CatalogRefreshHandle {
         try {
           await refreshSpotify(startedAt);
         } catch (err) {
-          emit({ type: "error", platform: "spotify", message: (err as Error).message });
+          // Redact before the message hits the SSE wire (§12 — every SSE
+          // payload must be redaction-safe; a non-JSON 2xx body would
+          // otherwise surface raw via a SyntaxError message).
+          emit({ type: "error", platform: "spotify", message: String(redact((err as Error).message)) });
           log.warn("catalog.spotify_refresh_failed", { message: (err as Error).message });
         }
       }
@@ -177,7 +180,7 @@ export function startCatalogRefresh(): CatalogRefreshHandle {
         try {
           await refreshApple(startedAt);
         } catch (err) {
-          emit({ type: "error", platform: "apple", message: (err as Error).message });
+          emit({ type: "error", platform: "apple", message: String(redact((err as Error).message)) });
           log.warn("catalog.apple_refresh_failed", { message: (err as Error).message });
         }
       }

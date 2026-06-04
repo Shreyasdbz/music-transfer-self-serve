@@ -19,10 +19,17 @@ import {
 const SNAP = LEDGER_PATH + ".catalog-test-snap";
 const _had = existsSync(LEDGER_PATH);
 if (_had) copyFileSync(LEDGER_PATH, SNAP);
+// Idempotency latch: on SIGINT we restore then process.exit(130), which fires
+// the 'exit' handler → restore() again. Without the latch the second pass
+// would copyFileSync from an already-unlinked snapshot and throw ENOENT from
+// inside an exit handler.
+let restored = false;
 function restore(): void {
+  if (restored) return;
+  restored = true;
   try { closeLedger(); } catch { /* */ }
-  if (_had) { copyFileSync(SNAP, LEDGER_PATH); try { unlinkSync(SNAP); } catch { /* */ } }
-  else if (existsSync(LEDGER_PATH)) { try { unlinkSync(LEDGER_PATH); } catch { /* */ } }
+  if (_had && existsSync(SNAP)) { copyFileSync(SNAP, LEDGER_PATH); try { unlinkSync(SNAP); } catch { /* */ } }
+  else if (!_had && existsSync(LEDGER_PATH)) { try { unlinkSync(LEDGER_PATH); } catch { /* */ } }
 }
 process.on("exit", restore);
 process.on("SIGINT", () => { restore(); process.exit(130); });
