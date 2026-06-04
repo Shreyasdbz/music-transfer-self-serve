@@ -25,7 +25,7 @@ import {
   type PreflightSurface,
   type PreflightTrigger,
 } from "../ledger/preflightStore.js";
-import { CHECKS, validateDetail, type CheckDef, type CheckName, type CheckResult } from "./checks.js";
+import { CHECKS, failureDetail, validateDetail, type CheckDef, type CheckName, type CheckResult } from "./checks.js";
 
 export interface CheckEvent {
   readonly seq: number;
@@ -88,12 +88,12 @@ async function runOne(runId: string, def: CheckDef): Promise<CheckStatus> {
   try {
     result = await def.run();
   } catch (err) {
-    // A check that throws unexpectedly is a fail, not a crash.
+    // A check that throws unexpectedly is a fail, not a crash. Build the
+    // failure detail through the SAME redacted construction site the leaf
+    // checks use, so `error_message_safe` is always genuinely redacted before
+    // it reaches the persisted ledger and the live SSE stream.
     log.warn("preflight.check_threw", { name: def.name, message: (err as Error).message });
-    result = {
-      status: "fail",
-      detail: { error_class: (err as Error).name || "Error", error_message_safe: String((err as Error).message ?? err) },
-    };
+    result = { status: "fail", detail: failureDetail(err) };
   }
   persistAndEmit(runId, def, result, Date.now() - start);
   return result.status;

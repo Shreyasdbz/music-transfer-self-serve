@@ -29,8 +29,14 @@ function sseInit(res: ServerResponse): void {
   });
 }
 
-function sseSend(res: ServerResponse, id: number | string, event: string, data: unknown): void {
-  res.write(`id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+/** Write one SSE frame. `id` is the row's numeric `seq` per §11.2 so the
+ * browser's Last-Event-ID reconnect protocol works; pass `null` for terminal
+ * frames (e.g. `complete`) so we don't poison Last-Event-ID with a
+ * non-numeric value (the stream closes right after, so no reconnect resumes
+ * from it anyway). */
+function sseSend(res: ServerResponse, id: number | null, event: string, data: unknown): void {
+  const idLine = id === null ? "" : `id: ${id}\n`;
+  res.write(`${idLine}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
 export function registerPreflightRoutes(): void {
@@ -91,7 +97,7 @@ export function registerPreflightRoutes(): void {
     };
     const complete = (payload: unknown): void => {
       if (closed) return;
-      sseSend(res, "complete", "complete", payload);
+      sseSend(res, null, "complete", payload);
       closed = true;
       res.end();
     };

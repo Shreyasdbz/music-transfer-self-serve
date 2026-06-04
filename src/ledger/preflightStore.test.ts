@@ -10,6 +10,7 @@ import {
   finishPreflightRun,
   getLatestPreflightRun,
   getPreflightRun,
+  hasInvalidationSinceLastPass,
   insertInvalidation,
   insertPreflightCheck,
   insertPreflightRun,
@@ -108,6 +109,33 @@ insertInvalidation("pf-test-inval2", "auto-403-scope", new Date(passAt + 60_000)
 {
   const g = computeGateState(passAt + 2 * 60_000);
   assert(!g.open && /scope\/permission/.test(g.reason), `gate: scope invalidation reason (got "${g.reason}")`);
+}
+
+// ── hasInvalidationSinceLastPass (debounce predicate) ────────────────────
+
+db.prepare("DELETE FROM preflight_runs").run();
+const pAt = T0 + 100_000;
+insertPreflightRun({ id: "pf-test-dq", started_at: new Date(pAt).toISOString(), status: "running", trigger: "manual", surface: "ui" });
+finishPreflightRun("pf-test-dq", "passed", new Date(pAt).toISOString());
+assert(!hasInvalidationSinceLastPass(), "debounce: no invalidation after pass → false");
+insertInvalidation("pf-test-dq-inval", "auto-401", new Date(pAt + 1000).toISOString());
+assert(hasInvalidationSinceLastPass(), "debounce: invalidation after pass → true");
+// A re-pass clears the predicate.
+const rp = pAt + 5000;
+insertPreflightRun({ id: "pf-test-dq-rp", started_at: new Date(rp).toISOString(), status: "running", trigger: "manual", surface: "ui" });
+finishPreflightRun("pf-test-dq-rp", "passed", new Date(rp).toISOString());
+assert(!hasInvalidationSinceLastPass(), "debounce: re-pass after invalidation → false again");
+
+// ── gate boundary: invalidation at the SAME ms as the pass → closed (>=) ──
+
+db.prepare("DELETE FROM preflight_runs").run();
+const sameTs = new Date(T0 + 200_000).toISOString();
+insertPreflightRun({ id: "pf-test-bnd", started_at: sameTs, status: "running", trigger: "manual", surface: "ui" });
+finishPreflightRun("pf-test-bnd", "passed", sameTs);
+insertInvalidation("pf-test-bnd-inval", "auto-401", sameTs); // same exact timestamp
+{
+  const g = computeGateState(Date.parse(sameTs) + 60_000);
+  assert(!g.open, "gate boundary: invalidation at same ms as pass → closed (fail-safe >=)");
 }
 
 // ── gate: no runs at all → closed ────────────────────────────────────────

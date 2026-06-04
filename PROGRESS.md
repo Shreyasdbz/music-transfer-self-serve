@@ -819,3 +819,47 @@ Keep entries factual and terse.
   Apple connected).
 - Next: Phase 6 — Catalog cache + Operation form UI (the gated `POST /api/catalog/refresh`
   stub becomes the real incremental refresh; the 501 flips to 200/SSE).
+
+### 2026-06-04 — Phase 5 validation sweep: 11 confirmed (all LOW) → fixed
+
+- Ran a 5-persona deep validation (security, correctness, blueprint-compliance,
+  regression, architecture) over Phase 5, each finding adversarially verified. 15 raw →
+  **11 confirmed, ALL LOW (0 high, 0 medium)** — the cleanest phase yet. After dedup (the
+  SSE-id issue was reported 3×) ≈9 unique. All addressed:
+  - **#1 redaction gap in runner throw-path** — `runOne`'s catch built
+    `error_message_safe` without `redact()` (every leaf check uses it). Latent (no current
+    check throws a secret-bearing error — HttpError already redacts its message), but a
+    §12-invariant gap. Now routes through `checks.failureDetail(err)` — single redacted
+    construction site.
+  - **#2 unbounded gate invalidation** — every failing opted-in request inserted a new
+    `invalidated` row; a fan-out read on a bad session → dozens of redundant rows.
+    `invalidateGate` now debounces via `hasInvalidationSinceLastPass()` (skip if the gate
+    is already closed by an invalidation since the last pass). First failure closes the
+    gate; the rest are no-ops.
+  - **#3 over-broad scope-403 classifier** — `unauthorized` / `forbidden access` /
+    `access token` matched generic 403 bodies and could wrongly invalidate. Narrowed to
+    `scope|insufficient|not authorized|permission` in both copies (gate.ts + util/http.ts).
+  - **#4/#6/#8 SSE `complete` used a non-numeric `id: complete`** — would poison
+    Last-Event-ID on reconnect (Number→NaN→0 → replay-all). `sseSend` now omits the `id:`
+    line for terminal frames (the stream closes right after, so no reconnect resumes).
+  - **#5 gate boundary strict `>`** — an invalidation in the SAME millisecond as the pass
+    was missed. Switched to `>=` (fail-closed; equal-ms collisions are negligible and a
+    re-pass has a strictly later finished_at so re-opens correctly).
+  - **#7 apple_storefront was a cache hit** — `apple_mut` warmed the storefront cache, so
+    `apple_storefront` didn't independently exercise the endpoint. It now
+    `clearStorefrontCache()` before resolving.
+  - **#9 apple_dev_token didn't confirm iss/kid** — §11.1 requires decoding to confirm
+    iss/kid/exp sane. Now verifies `iss === Team ID` and `kid === Key ID` (internally —
+    NOT surfaced in `detail`, since those ARE the Team/Key ID that §12 forbids exposing).
+  - **#10 blueprint §9 status comment omitted `interrupted`** — the startup sweep marks
+    stranded `running` preflight_runs rows `interrupted` (db.ts already does this). Added
+    to the §9 comment.
+  - **#11 doctor never installed the auth-failure sink** — a `doctor` run hitting a
+    persistent 401/scope-403 wouldn't invalidate the gate (the server did). `doctor` now
+    calls `installAuthFailureSink()` too — symmetric auto-invalidation both surfaces.
+- Tests +8 (debounce predicate ×3, same-ms gate boundary ×1, tightened classifier ×4).
+  Live `doctor` re-verified: all 10 checks still pass (apple_dev_token now also validates
+  iss/kid; apple_storefront independently resolves). **Suite: 238/238 PASS** across 10
+  suites. Lint + build clean.
+- No code change to the auth-failure sink contract or any invariant; the only spec touch
+  was the §9 comment (doc-only). Ledger restored from backup after the live re-verify.

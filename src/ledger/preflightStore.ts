@@ -176,10 +176,15 @@ export function computeGateState(nowMs: number = Date.now()): GateState {
     };
   }
 
+  // `>=` (not `>`) so an invalidation inserted in the SAME millisecond as the
+  // pass finished is treated as "since the pass" — fail-closed. Equal-ms
+  // collisions are astronomically rare in a human-driven flow, and closing the
+  // gate is the safe direction; a subsequent re-pass has a strictly later
+  // finished_at and correctly re-opens.
   const invalidatedAfter = db
     .prepare(
       `SELECT trigger, started_at FROM preflight_runs
-       WHERE status = 'invalidated' AND started_at > ?
+       WHERE status = 'invalidated' AND started_at >= ?
        ORDER BY started_at DESC, rowid DESC LIMIT 1`,
     )
     .get(passed.finished_at) as { trigger: string; started_at: string } | undefined;
@@ -196,4 +201,28 @@ export function computeGateState(nowMs: number = Date.now()): GateState {
   }
 
   return { open: true, reason: "Permissions check passed." };
+}
+
+/** True when an `invalidated` row exists after the latest passing run (i.e.
+ * the gate is currently closed BY an invalidation, not by expiry or absence
+ * of a pass). Used to debounce repeat auto-invalidations. */
+export function hasInvalidationSinceLastPass(): boolean {
+  const db = openLedger();
+  const passed = db
+    .prepare(
+      `SELECT finished_at FROM preflight_runs
+       WHERE status = 'passed' AND finished_at IS NOT NULL
+       ORDER BY finished_at DESC, rowid DESC LIMIT 1`,
+    )
+    .get() as { finished_at: string } | undefined;
+  // No pass yet → the gate is closed for a different reason; still debounce
+  // (an invalidation row adds nothing when there's no pass to invalidate).
+  const since = passed?.finished_at ?? "";
+  const row = db
+    .prepare(
+      `SELECT 1 FROM preflight_runs
+       WHERE status = 'invalidated' AND started_at >= ? LIMIT 1`,
+    )
+    .get(since) as unknown;
+  return row !== undefined;
 }

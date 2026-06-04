@@ -17,6 +17,11 @@ assert(classifyAuthFailure(403, "permission denied") === "scope", "classify: 403
 assert(classifyAuthFailure(403, '{"error":"rate limit exceeded"}') === "none", "classify: 403 rate-limit → none");
 assert(classifyAuthFailure(403, "too many requests") === "none", "classify: 403 too many requests → none");
 assert(classifyAuthFailure(403, "some unrelated 403") === "none", "classify: 403 unknown → none (conservative)");
+// Tightened (finding #3): generic auth words no longer force a scope verdict.
+assert(classifyAuthFailure(403, "unauthorized") === "none", "classify: bare 'unauthorized' → none (too broad before)");
+assert(classifyAuthFailure(403, "invalid access token") === "none", "classify: 'access token' → none (too broad before)");
+assert(classifyAuthFailure(403, "insufficient scope for this request") === "scope", "classify: 'insufficient scope' → scope");
+assert(classifyAuthFailure(403, "not authorized for that resource") === "scope", "classify: 'not authorized' → scope");
 assert(classifyAuthFailure(429, "rate limit") === "none", "classify: 429 → none");
 assert(classifyAuthFailure(200, "") === "none", "classify: 200 → none");
 assert(classifyAuthFailure(500, "") === "none", "classify: 500 → none");

@@ -546,7 +546,9 @@ CREATE TABLE preflight_runs (
   id          TEXT PRIMARY KEY,   -- ulid/uuid
   started_at  TEXT NOT NULL,
   finished_at TEXT,                -- nullable while running
-  status      TEXT NOT NULL,       -- 'running' | 'passed' | 'failed' | 'partial' | 'invalidated'
+  status      TEXT NOT NULL,       -- 'running' | 'passed' | 'failed' | 'partial' | 'invalidated' | 'interrupted'
+                                   -- ('interrupted' = startup sweep found this row stuck
+                                   --  in 'running' after a crash; §12.5, same as operations)
   trigger     TEXT NOT NULL,       -- 'manual' | 'cli' | 'auto-401' | 'auto-403-scope'
   surface     TEXT NOT NULL        -- 'ui' | 'cli'
 );

@@ -42,7 +42,8 @@ export function setAuthFailureSink(fn: ((trigger: AuthFailureTrigger) => void) |
 function scope403(bodyText: string): boolean {
   const body = bodyText.toLowerCase();
   if (/rate.?limit|too many requests|quota exceeded/.test(body)) return false;
-  return /scope|insufficient|permission|not authorized|unauthorized|forbidden access|access token/.test(body);
+  // Narrow scope/permission match — see preflight/gate.classifyAuthFailure.
+  return /scope|insufficient|not authorized|permission/.test(body);
 }
 
 export interface HttpResponse {

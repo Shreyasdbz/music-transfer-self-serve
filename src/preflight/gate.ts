@@ -10,6 +10,7 @@ import { setAuthFailureSink } from "../util/http.js";
 import { log } from "../util/log.js";
 import {
   computeGateState,
+  hasInvalidationSinceLastPass,
   insertInvalidation,
   type GateState,
   type PreflightTrigger,
@@ -20,8 +21,15 @@ export function getGateState(): GateState {
 }
 
 /** Insert an auto-invalidation marker so the gate closes until the human
- * re-runs Check permissions. */
+ * re-runs Check permissions.
+ *
+ * Debounced: if the gate is ALREADY closed by an invalidation since the last
+ * pass, skip the insert. The first failure on a bad session closes the gate;
+ * every subsequent failing request in the same burst (paginated reads, a
+ * fan-out catalog refresh) would otherwise insert a redundant row. One
+ * invalidation is enough — the rest are pure ledger churn. */
 export function invalidateGate(trigger: "auto-401" | "auto-403-scope"): void {
+  if (hasInvalidationSinceLastPass()) return;
   insertInvalidation(randomUUID(), trigger as PreflightTrigger, new Date().toISOString());
   log.warn("preflight.gate_auto_invalidated", { trigger });
 }
@@ -43,8 +51,10 @@ export function classifyAuthFailure(status: number, bodyText: string): "none" | 
     const body = bodyText.toLowerCase();
     // Rate-limit 403s (or anything mentioning rate limiting) never invalidate.
     if (/rate.?limit|too many requests|quota exceeded/.test(body)) return "none";
-    // Scope / permission problems do.
-    if (/scope|insufficient|permission|not authorized|unauthorized|forbidden access|access token/.test(body)) {
+    // Scope / permission problems do. Kept deliberately narrow — broad
+    // substrings like "unauthorized" or "access token" matched generic 403
+    // bodies and could wrongly invalidate the gate on an unrelated failure.
+    if (/scope|insufficient|not authorized|permission/.test(body)) {
       return "scope";
     }
     return "none";

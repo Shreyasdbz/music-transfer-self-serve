@@ -5,6 +5,7 @@
 
 import { openLedger, closeLedger } from "./ledger/db.js";
 import { runPreflight } from "./preflight/runner.js";
+import { installAuthFailureSink } from "./preflight/gate.js";
 import { getPreflightRun, computeGateState } from "./ledger/preflightStore.js";
 
 const GROUPS: { label: string; names: string[] }[] = [
@@ -17,6 +18,10 @@ const MARK: Record<string, string> = { pass: "✅", fail: "❌", skip: "⏭️ "
 
 async function doctor(): Promise<number> {
   openLedger();
+  // Same wiring as the server: a persistent 401 / scope-403 during the run
+  // closes the gate, so a doctor that detects bad creds invalidates the gate
+  // for the UI too (and vice versa) — symmetric auto-invalidation.
+  installAuthFailureSink();
   process.stdout.write("Running permissions preflight (doctor)…\n");
 
   const handle = runPreflight({ trigger: "cli", surface: "cli" });

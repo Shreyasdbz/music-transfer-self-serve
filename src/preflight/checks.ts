@@ -11,7 +11,7 @@
 
 import { createHash } from "node:crypto";
 import jwt from "jsonwebtoken";
-import { checkEnv } from "../config.js";
+import { checkEnv, loadAppleConfig } from "../config.js";
 import { redact } from "../util/log.js";
 import { readTokens } from "../auth/tokens.js";
 import { getAccessToken, REQUIRED_SPOTIFY_SCOPES } from "../auth/spotify.js";
@@ -172,9 +172,18 @@ async function checkAppleDevToken(): Promise<CheckResult> {
     const token = getLongLivedDevToken(); // signs + caches; regenerates near expiry
     const decoded = jwt.decode(token, { complete: true });
     const alg = decoded?.header?.alg;
-    const payload = decoded?.payload as { exp?: number } | undefined;
+    const kid = decoded?.header?.kid;
+    const payload = decoded?.payload as { iss?: string; exp?: number } | undefined;
+    const iss = payload?.iss;
     const exp = payload?.exp;
-    if (alg !== "ES256" || !exp) {
+    // §11.1: decode locally to confirm iss, kid, and exp are sane. We verify
+    // iss/kid are present (and match the configured Team/Key ID), but we do
+    // NOT put them in `detail` — they ARE the Team ID / Key ID, which §12
+    // forbids surfacing.
+    const cfg = loadAppleConfig();
+    const issOk = iss === cfg.appleTeamId;
+    const kidOk = kid === cfg.appleKeyId;
+    if (alg !== "ES256" || !exp || !issOk || !kidOk) {
       return { status: "fail", detail: { alg: "ES256", exp_days_remaining: 0, signed: false } };
     }
     const days = Math.floor((exp * 1000 - Date.now()) / (24 * 60 * 60 * 1000));
@@ -198,6 +207,12 @@ async function checkAppleMut(): Promise<CheckResult> {
 
 async function checkAppleStorefront(): Promise<CheckResult> {
   try {
+    // Clear the cache first so this check genuinely exercises the
+    // `/v1/me/storefront` endpoint rather than returning the value the
+    // `apple_mut` check warmed a moment earlier (the two checks run in the
+    // same Apple group). This is the §11.1 storefront-cache warm point for the
+    // rest of the session.
+    clearStorefrontCache();
     const sf = await getStorefront();
     return { status: "pass", detail: { storefront: sf } };
   } catch (err) {
