@@ -11,10 +11,10 @@
 // AC #3: state validation in handleCallback — unknown state → state_unknown;
 // expired (>10min) state → state_expired, entry purged.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { SPOTIFY_REDIRECT_URI_EXPECTED } from "../config.js";
-import { __test as spotifyTest, buildAuthorizeUrl, handleCallback } from "./spotify.js";
+import { __test as spotifyTest, buildAuthorizeUrl, handleCallback, REQUIRED_SPOTIFY_SCOPES } from "./spotify.js";
 
 const ROOT = resolve(import.meta.dirname, "..", "..");
 
@@ -25,6 +25,10 @@ function assert(cond: unknown, msg: string): void {
   } else {
     process.stdout.write(`PASS  ${msg}\n`);
   }
+}
+
+function skip(msg: string): void {
+  process.stdout.write(`SKIP  ${msg}\n`);
 }
 
 // --- Phase 2 AC #2 ---------------------------------------------------------
@@ -66,6 +70,42 @@ assert(
   `AC2(c): authorize URL redirect_uri === expected ("${fromUrl}" vs "${SPOTIFY_REDIRECT_URI_EXPECTED}")`,
 );
 
+// (d) .env byte-equality — guarded. .env is gitignored, so this only runs
+// where it's actually present (dev machine with creds), and only when the
+// SPOTIFY_REDIRECT_URI line has a value. Where .env is absent or empty,
+// loadSpotifyConfig() at runtime + Phase 5's `env` preflight cover this.
+const envPath = resolve(ROOT, ".env");
+if (existsSync(envPath)) {
+  const env = readFileSync(envPath, "utf8");
+  const em = env.match(/^SPOTIFY_REDIRECT_URI=(.*)$/m);
+  const envValue = em?.[1]?.trim() ?? "";
+  if (envValue) {
+    assert(
+      envValue === SPOTIFY_REDIRECT_URI_EXPECTED,
+      `AC2(d): .env SPOTIFY_REDIRECT_URI === expected ("${envValue}" vs "${SPOTIFY_REDIRECT_URI_EXPECTED}")`,
+    );
+  } else {
+    skip("AC2(d): .env present but SPOTIFY_REDIRECT_URI is empty (covered by runtime loadSpotifyConfig)");
+  }
+} else {
+  skip("AC2(d): .env not present — gitignored, dev-only check");
+}
+
+// (e) Sanity-check the authorize URL has every required scope, S256
+// challenge, and a 32-byte base64url state. Cheap defense against the
+// flow being silently weakened in the future.
+const urlScopes = (parsed.searchParams.get("scope") ?? "").split(" ");
+const missingScopes = REQUIRED_SPOTIFY_SCOPES.filter((s) => !urlScopes.includes(s));
+assert(missingScopes.length === 0, `AC2(e): authorize URL contains all 6 required scopes (missing: ${missingScopes.join(", ") || "none"})`);
+assert(
+  parsed.searchParams.get("code_challenge_method") === "S256",
+  "AC2(e): authorize URL uses S256 code challenge",
+);
+assert(
+  (parsed.searchParams.get("state") ?? "").length >= 32,
+  "AC2(e): authorize URL state is ≥32 chars (base64url of 32 random bytes)",
+);
+
 // --- Phase 2 AC #3 ---------------------------------------------------------
 
 spotifyTest.clear();
@@ -80,5 +120,29 @@ assert(spotifyTest.hasState("expired-state"), "AC3(b): expired state seeded");
 const r2 = await handleCallback("expired-state", "any-code");
 assert(r2.kind === "state_expired", `AC3(b): expired state → state_expired (got ${r2.kind})`);
 assert(!spotifyTest.hasState("expired-state"), "AC3(b): expired state entry purged");
+
+// --- Sweeper — directly exercise the purge logic the 60s interval runs ----
+
+spotifyTest.clear();
+const now = Date.now();
+spotifyTest.injectState("fresh", "v1", now);                       // 0 min old
+spotifyTest.injectState("recent", "v2", now - 9 * 60 * 1000);      // 9 min old (under TTL)
+spotifyTest.injectState("stale", "v3", now - 11 * 60 * 1000);      // 11 min old (expired)
+spotifyTest.injectState("ancient", "v4", now - 60 * 60 * 1000);    // 1 hr old (expired)
+assert(spotifyTest.size() === 4, `AC4: sweeper test seeded 4 entries (got ${spotifyTest.size()})`);
+
+const purged = spotifyTest.runSweep();
+assert(purged === 2, `AC4: sweeper purged 2 expired entries (got ${purged})`);
+assert(spotifyTest.hasState("fresh"), "AC4: fresh entry survives sweep");
+assert(spotifyTest.hasState("recent"), "AC4: <10min entry survives sweep");
+assert(!spotifyTest.hasState("stale"), "AC4: 11min entry purged");
+assert(!spotifyTest.hasState("ancient"), "AC4: 1h entry purged");
+assert(spotifyTest.size() === 2, `AC4: store size after sweep == 2 (got ${spotifyTest.size()})`);
+
+// A second sweep with the same `now` should be a no-op (idempotent).
+const purged2 = spotifyTest.runSweep(now);
+assert(purged2 === 0, `AC4: re-running sweeper purges 0 (got ${purged2})`);
+
+spotifyTest.clear();
 
 process.exit(process.exitCode ?? 0);

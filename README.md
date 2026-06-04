@@ -86,6 +86,18 @@ The build/run is mostly hands-off; you're only pulled in at four credential boun
    npx tsx src/cli.ts doctor    # runs the same 10-check preflight as the UI button
    ```
 
+### Dev helpers
+
+For quick stop/restart cycles while iterating:
+
+```bash
+npm start        # foreground; Ctrl-C stops
+npm run status   # is the server up? on which PID?
+npm run stop     # kill it (SIGTERM with SIGKILL fallback if it hangs)
+npm run restart  # stop, then foreground-start
+npm test         # run the AC unit tests
+```
+
 ## Usage
 
 1. Start the server (`npx tsx src/server.ts`) and open the UI.

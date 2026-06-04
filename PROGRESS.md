@@ -371,3 +371,40 @@ Keep entries factual and terse.
   is exactly the kind of drift the §0 "self-healing" principle anticipates.
 - Next: Phase 3 — Apple Music auth (dev-token JWT + MusicKit MUT capture), with ⏸C
   (Apple Developer setup) and ⏸D (consent in the UI).
+
+### 2026-06-04 — Phase 2 final close-out + dev script
+
+- Closed every leftover from yesterday's wrap-up. None were AC blockers, but worth
+  pinning down so Phase 3 starts on a clean floor:
+  1. **AC #2 fourth assertion landed.** `.env`'s `SPOTIFY_REDIRECT_URI` byte-equality
+     is now asserted by the test when `.env` is present and the line has a value;
+     guarded with a SKIP on a fresh clone (where `.env` is gitignored / absent). On
+     this machine: PASS.
+  2. **AC #2(e) defense-in-depth assertions** — the authorize URL contains all 6
+     required scopes, uses S256, and has a ≥32-char state. Catches silent regressions
+     where someone accidentally weakens the flow.
+  3. **AC #4 sweeper test** — extracted the sweep logic into `sweepExpiredStates()`,
+     added a `__test.runSweep` hook, and seeded 4 entries spanning fresh / <10min /
+     11min / 1h to verify the partition is exactly right (2 purged, 2 retained), the
+     log line fires only when `purged > 0`, and a second sweep is idempotent. 7 new
+     assertions, all PASS. Total suite is now 21/21 PASS.
+  4. **`util/http.ts onUnauthorized` left stubbed.** Per blueprint §13 the refresh-
+     aware auto-invalidation lands in Phase 5; leaving the passthrough is on-spec.
+  5. **Live Reconnect verified.** Stopped the stale pre-`loadSpotifyConfig` server,
+     started fresh, POST'd `/api/auth/spotify/start` — returns a clean authorize URL
+     with a new state, S256 challenge, response_type=code, even though Apple keys are
+     empty. The split was the right call.
+  6. **Popup-failure UX path** — code path in `web/app.js` (popup-null → setMessage
+     "blocked"; popup closed before callback → 10s grace then "did not complete"). Not
+     auto-tested (browser-side; no headless browser in v1). Reviewed by reading;
+     correct per blueprint §11.1.
+- **Dev helpers landed.** `scripts/dev.sh {stop|status|restart}` exposed as
+  `npm run stop|status|restart`. `stop` SIGTERMs every process matching
+  `tsx src/server.ts`, waits up to 5s for port 8888 to free, then SIGKILLs the holdouts.
+  `restart` stops then `exec`s `npm start` (foreground). README's Setup section now
+  documents the helpers. Verified end-to-end on this machine: stop killed the stale
+  9h-old server cleanly; status reported correctly before/after; fresh start picked up
+  the `loadSpotifyConfig` fix.
+- Test count: **21/21 PASS** (AC2 a–e ×8, AC3 a–b ×4, AC4 sweeper ×9 — and the AC2(d)
+  `.env` SKIP path covered separately on a fresh clone).
+- **Phase 2 is now fully closed.** No deferred work that should have landed here.

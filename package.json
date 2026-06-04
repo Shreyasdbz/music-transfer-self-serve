@@ -10,6 +10,9 @@
   "scripts": {
     "build": "tsc --noEmit",
     "start": "tsx src/server.ts",
+    "stop": "scripts/dev.sh stop",
+    "status": "scripts/dev.sh status",
+    "restart": "scripts/dev.sh restart",
     "test": "tsx src/auth/spotify.test.ts",
     "doctor": "tsx src/cli.ts doctor",
     "lint": "eslint .",

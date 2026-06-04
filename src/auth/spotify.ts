@@ -42,18 +42,24 @@ interface StateEntry {
 const stateStore = new Map<string, StateEntry>();
 let sweeper: NodeJS.Timeout | undefined;
 
+/** Walk the state store and delete any entry older than STATE_TTL_MS.
+ * Returns the count purged. Called by the 60s interval and by the AC test. */
+function sweepExpiredStates(now = Date.now()): number {
+  let purged = 0;
+  for (const [state, entry] of stateStore.entries()) {
+    if (now - entry.created_at > STATE_TTL_MS) {
+      stateStore.delete(state);
+      purged++;
+    }
+  }
+  if (purged > 0) log.debug("spotify.state_sweep_purged", { purged });
+  return purged;
+}
+
 export function startStateSweeper(): void {
   if (sweeper) return;
   sweeper = setInterval(() => {
-    const now = Date.now();
-    let purged = 0;
-    for (const [state, entry] of stateStore.entries()) {
-      if (now - entry.created_at > STATE_TTL_MS) {
-        stateStore.delete(state);
-        purged++;
-      }
-    }
-    if (purged > 0) log.debug("spotify.state_sweep_purged", { purged });
+    sweepExpiredStates();
   }, SWEEP_INTERVAL_MS);
   sweeper.unref?.();
 }
@@ -216,4 +222,5 @@ export const __test = {
   hasState: (state: string): boolean => stateStore.has(state),
   clear: (): void => stateStore.clear(),
   size: (): number => stateStore.size,
+  runSweep: (now?: number): number => sweepExpiredStates(now),
 };
