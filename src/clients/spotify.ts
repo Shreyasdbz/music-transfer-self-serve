@@ -31,12 +31,22 @@ export async function getMe(): Promise<SpotifyProfile> {
   });
 }
 
+// Note (2026-06): Spotify renamed the playlist's `tracks` field to `items` on
+// the playlist object — both on the listing endpoint and on the single-playlist
+// endpoint. The track count is now at `items.total`. We accept either shape so
+// the client survives Spotify rolling the rename back, or any client (e.g.
+// `/v1/me/tracks` for Saved Tracks) that still emits the legacy field.
 export interface SpotifyPlaylistSummary {
   readonly id: string;
   readonly name: string;
   readonly owner: { id: string; display_name?: string | null };
-  readonly tracks: { total: number };
+  readonly items?: { total: number; href?: string };
+  readonly tracks?: { total: number; href?: string };
   readonly external_urls: { spotify?: string };
+}
+
+export function playlistTrackCount(p: SpotifyPlaylistSummary): number | undefined {
+  return p.items?.total ?? p.tracks?.total;
 }
 
 interface Page<T> {
@@ -89,48 +99,23 @@ interface SavedTrackItem {
   track: SpotifyTrack;
 }
 
-interface PlaylistWithItems {
-  items: Page<PlaylistTrackItem>;
-}
-
 /**
  * Reads a playlist's tracks.
  *
- * Implementation note (observed 2026-06): Spotify returns 403 Forbidden on the
- * dedicated `/v1/playlists/{id}/tracks` endpoint for apps in Development Mode
- * quota — same token, same scopes, same playlist where `/v1/playlists/{id}`
- * itself returns 200. The same paging data is reachable via the parent endpoint
- * under a field named `items` (Spotify also appears to have renamed the
- * legacy `tracks` field to `items` on the playlist object). We therefore:
- *   - fetch the first page via `/v1/playlists/{id}` and read `items.items[].track`
- *   - paginate via `items.next` if present
- *
- * If `items.next` points back at the restricted `/tracks` endpoint and 403s,
- * we surface that to the caller — Phase 5 preflight will catch this and
- * Phase 7 will need a workaround (likely: walk pages by re-fetching the parent
- * with `?offset=...&fields=items.items(...),items.next`). Documented as a
- * Phase 7 risk in PROGRESS.md.
+ * Endpoint note (verified 2026-06): Spotify renamed the playlist-tracks
+ * subpath from `/v1/playlists/{id}/tracks` to `/v1/playlists/{id}/items` and
+ * the inner field from `track` to `item`. The old `/tracks` URL now returns
+ * 403 Forbidden (not gone — just rejected, presumably to push clients off the
+ * legacy shape). The new `/items` endpoint accepts the same query params
+ * (`limit`, `offset`, `market`, `fields`) and returns the same Page<T> shape.
+ * `extractTrack` accepts both `item` and `track` field names so a future
+ * roll-back doesn't break us.
  */
 export async function listPlaylistTracks(playlistId: string): Promise<SpotifyTrack[]> {
-  const first = await httpJson<PlaylistWithItems>({
-    method: "GET",
-    url: `${API}/v1/playlists/${encodeURIComponent(playlistId)}?market=from_token`,
-    headers: await bearer(),
-  });
-  const out: PlaylistTrackItem[] = [...first.items.items];
-  let url = first.items.next;
-  let pages = 1;
-  while (url && pages < MAX_PAGES) {
-    const page: Page<PlaylistTrackItem> = await httpJson<Page<PlaylistTrackItem>>({
-      method: "GET",
-      url,
-      headers: await bearer(),
-    });
-    out.push(...page.items);
-    url = page.next;
-    pages++;
-  }
-  return out.map(extractTrack).filter((t): t is SpotifyTrack => t !== null);
+  const items = await paginate<PlaylistTrackItem>(
+    `${API}/v1/playlists/${encodeURIComponent(playlistId)}/items?limit=50&market=from_token`,
+  );
+  return items.map(extractTrack).filter((t): t is SpotifyTrack => t !== null);
 }
 
 export async function listSavedTracks(): Promise<SpotifyTrack[]> {

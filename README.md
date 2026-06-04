@@ -73,6 +73,14 @@ The build/run is mostly hands-off; you're only pulled in at four credential boun
    Click **Connect Spotify** and **Connect Apple Music** in the UI's auth panel.
    The auth flows open in popups; the local server captures the tokens and stores them in
    `data/tokens.json`.
+
+   > **Browser note (Safari).** Safari's "HTTPS-Only" privacy default blocks the OAuth
+   > callback to `http://127.0.0.1:8888/auth/spotify/callback` (`WebKitErrorDomain:305`),
+   > even though loopback HTTP redirects are explicitly allowed by OAuth 2.0 for native
+   > apps (RFC 8252). Either disable HTTPS-Only in Safari → Settings → Privacy → Advanced
+   > → "Use HTTPS" → "In Private Browsing only" or "Off", or run the **Connect** flow
+   > in Chrome / Firefox / Brave. Once `data/tokens.json` is populated, Safari is fine
+   > for normal use of the UI; the auth-only step is what's blocked.
 5. **Verify**
    ```bash
    npx tsx src/cli.ts doctor    # runs the same 10-check preflight as the UI button

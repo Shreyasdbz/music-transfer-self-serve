@@ -339,5 +339,35 @@ Keep entries factual and terse.
   on the user's own playlist and surfaces the drift to the user with a clear remediation
   pointer (Extended Quota Mode application, OR add user in App User Management).
 - Result: Phase 2 AC #1 ✅, AC #2 ✅, AC #3 ✅. Phase 2 done.
+
+### 2026-06-04 — Spotify drift correction (was wrong yesterday; the right story)
+
+- Yesterday's PROGRESS entry attributed the `/v1/playlists/{id}/tracks` 403 to
+  "Development-Mode quota" with concern about pagination beyond 50 items. **That was
+  wrong.** After a second probe, the actual story is much simpler — Spotify executed
+  a consistent rename across the playlist surface:
+  - field `tracks` → `items` on the playlist object (both list + detail endpoints)
+  - subpath `/tracks` → `/items` on the URL
+  - inner field `track` → `item` on each PlaylistTrackItem
+  The legacy `/tracks` endpoint now returns 403 (not deprecated to 404 — actively
+  rejected, presumably to push clients off the legacy URL); the new `/items` endpoint
+  takes the same `limit`/`offset`/`market`/`fields` query params and returns the same
+  Page<T> shape. There is no quota issue, no Extended Quota Mode needed, no Phase 7
+  hardening risk for normal-sized playlists.
+- `src/clients/spotify.ts` cleanup:
+  - `SpotifyPlaylistSummary` now accepts `items?: {total, href}` (new) and `tracks?: {total, href}` (legacy fallback); helper `playlistTrackCount` reads either.
+  - `listPlaylistTracks` now hits `/v1/playlists/{id}/items?limit=50&market=from_token`
+    directly and paginates via the response's `next` URL — same simple shape as
+    `listSavedTracks` and `listMyPlaylists`. Code is back to the standard pattern.
+  - `extractTrack` kept to absorb the `item` vs `track` field name across surfaces.
+- Live re-verification (ephemeral script, deleted): all 7 owned playlists read end-to-end,
+  declared totals match read totals exactly, **534/534 tracks have ISRCs**. Sweat (308),
+  India Spice (123), Sangeet (49), Pithi & Haldi (25), Baraat (16), Garba (11),
+  Video Hard (2). Pagination across the 308 and 123-track playlists exercised. Liked
+  Songs still works at 1623 tracks. AC #1 is now unambiguously satisfied.
+- README updated with a Safari/HTTPS-Only troubleshooting note under Setup.
+- No blueprint amendment needed — the renames are implementation-tier drift the client
+  now handles, not a spec change. §6 (API hazards) is Apple-side; the Spotify rename
+  is exactly the kind of drift the §0 "self-healing" principle anticipates.
 - Next: Phase 3 — Apple Music auth (dev-token JWT + MusicKit MUT capture), with ⏸C
   (Apple Developer setup) and ⏸D (consent in the UI).
