@@ -13,6 +13,7 @@
 //     in 10 min, vs the 180-day token which never leaves the server.
 
 import { readFileSync, chmodSync, statSync } from "node:fs";
+import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { loadAppleConfig } from "../config.js";
@@ -67,9 +68,23 @@ let cachedPrivateKey: string | undefined;
 function loadPrivateKey(): string {
   if (cachedPrivateKey) return cachedPrivateKey;
   const cfg = loadAppleConfig();
-  // Enforce 0600 on the .p8 per §12 ("Apple's downloaded .p8 is 0644 by
-  // default; chmod 0600 it on first read, or refuse to run if it's
-  // group/world readable").
+  // Enforce 0700 on secrets/ + 0600 on the .p8 per §12 ("Apple's downloaded
+  // .p8 is 0644 by default; chmod 0600 it on first read, or refuse to run if
+  // it's group/world readable").
+  const secretsDir = dirname(cfg.applePrivateKeyPath);
+  try {
+    const dst = statSync(secretsDir);
+    if ((dst.mode & 0o077) !== 0) {
+      try {
+        chmodSync(secretsDir, 0o700);
+        log.info("apple.secrets_dir_perms_tightened");
+      } catch {
+        // Non-fatal — the .p8 itself is the load-bearing perm.
+      }
+    }
+  } catch {
+    // statSync may fail on non-POSIX FS; the read below is what really matters.
+  }
   try {
     const st = statSync(cfg.applePrivateKeyPath);
     if ((st.mode & 0o077) !== 0) {

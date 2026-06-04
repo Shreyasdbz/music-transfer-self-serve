@@ -55,10 +55,19 @@ export function serveStatic(
   if (ext === ".html") {
     // Inject the CSRF token <meta> tag. We rewrite the response body in
     // memory — these files are tiny.
+    //
+    // Detection has to look for an actual `<meta ... name="csrf-token" ...>`
+    // tag, not just any occurrence of the string `name="csrf-token"`, because
+    // the static page is allowed to contain JS that READS the tag
+    // (e.g. `document.querySelector('meta[name="csrf-token"]')`). An overly
+    // liberal check matched that JS, ran a regex replace that found nothing,
+    // and silently shipped the page with no token — which then 403'd every
+    // subsequent POST. Test fixture: musickit.html bit by exactly this.
     let body = readFileSync(filePath, "utf8");
     const metaTag = `<meta name="csrf-token" content="${csrfToken}">`;
-    if (body.includes('name="csrf-token"')) {
-      body = body.replace(/<meta\s+name="csrf-token"[^>]*>/, metaTag);
+    const META_TAG_RE = /<meta\s+[^>]*\bname=["']csrf-token["'][^>]*>/i;
+    if (META_TAG_RE.test(body)) {
+      body = body.replace(META_TAG_RE, metaTag);
     } else if (body.includes("</head>")) {
       body = body.replace("</head>", `    ${metaTag}\n  </head>`);
     } else {

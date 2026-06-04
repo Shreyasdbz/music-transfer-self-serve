@@ -54,7 +54,18 @@ function renderApple(a) {
 let inFlightPopup = null;
 let popupWatchInterval = null;
 
-function watchPopup(popup) {
+/** Watch a popup and, after it closes:
+ *   - re-poll auth status (so the panel flips green if the flow succeeded)
+ *   - clear the "Opening…" message on success
+ *   - surface "did not complete" only if the *expected* platform is still
+ *     not connected after a 10s grace
+ *
+ * `platform` is "spotify" | "apple" — needed because the grace check was
+ * hardcoded to the Spotify-side el originally, which left the Apple flow's
+ * "Opening Apple Music authorization…" message stuck on screen even after
+ * the popup closed and the auth succeeded.
+ */
+function watchPopup(popup, platform) {
   if (!popup) {
     setMessage(
       "Your browser blocked the popup; allow popups for 127.0.0.1:8888 and try again.",
@@ -68,14 +79,19 @@ function watchPopup(popup) {
     if (!inFlightPopup || inFlightPopup.closed) {
       clearInterval(popupWatchInterval);
       popupWatchInterval = null;
-      // After the popup closes (success OR cancel), re-poll status.
-      // Per blueprint §11.1, a 10s grace handles the "closed without callback" case.
-      setTimeout(() => {
-        refreshAuthStatus();
+      // After the popup closes (success OR cancel), re-poll status, then
+      // either clear the "Opening…" message on success, or surface the
+      // failure on the 10s grace per blueprint §11.1.
+      setTimeout(async () => {
+        await refreshAuthStatus();
+        const statusEl = platform === "apple" ? appleStatusEl : spotifyStatusEl;
+        if (statusEl.dataset.state === "connected") {
+          setMessage(""); // success — clear the "Opening…" line
+        }
       }, 250);
       setTimeout(() => {
-        // If we're still not connected after 10s, the user likely cancelled.
-        if (spotifyStatusEl.dataset.state !== "connected") {
+        const statusEl = platform === "apple" ? appleStatusEl : spotifyStatusEl;
+        if (statusEl.dataset.state !== "connected") {
           setMessage("Connect attempt did not complete; try again.", "error");
         }
       }, 10_000);
@@ -100,7 +116,7 @@ async function connectSpotify() {
     }
     const { authorizeUrl } = await r.json();
     const popup = window.open(authorizeUrl, "spotify-auth", "width=520,height=720");
-    watchPopup(popup);
+    watchPopup(popup, "spotify");
   } catch (err) {
     setMessage(`Could not start Spotify auth: ${err.message}`, "error");
   }
@@ -112,7 +128,7 @@ async function connectApple() {
   // for the short-lived dev token + nonce. We just have to open the popup;
   // CSRF + Origin are enforced server-side inside that page's fetches.
   const popup = window.open("/musickit.html", "apple-auth", "width=520,height=720");
-  watchPopup(popup);
+  watchPopup(popup, "apple");
 }
 
 spotifyBtn.addEventListener("click", connectSpotify);

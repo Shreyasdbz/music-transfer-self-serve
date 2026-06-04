@@ -193,9 +193,20 @@ export async function searchCatalog(query: string, limit = 25): Promise<AppleCat
 
 // ── Charts (for preflight's ISRC-fixture sourcing per §11.1) ──────────────
 
+interface ChartContainer {
+  chart?: string;
+  data?: AppleCatalogSong[];
+  href?: string;
+  name?: string;
+  next?: string;
+  orderId?: string;
+}
+
 interface ChartsResponse {
   results?: {
-    songs?: { data: { data: AppleCatalogSong[] }[] };
+    // Apple returns `songs` as an array of chart containers (e.g. one per chart
+    // type within the requested type). We take the first container's `data`.
+    songs?: ChartContainer[];
   };
 }
 
@@ -210,5 +221,5 @@ export async function getTopChartSongs(limit = 1): Promise<AppleCatalogSong[]> {
     url,
     headers: devTokenHeaders(),
   });
-  return r.results?.songs?.data?.[0]?.data ?? [];
+  return r.results?.songs?.[0]?.data ?? [];
 }

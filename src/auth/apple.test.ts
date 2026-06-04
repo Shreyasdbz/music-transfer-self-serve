@@ -7,9 +7,28 @@
 // AC #4: nonce sweeper purges expired entries, retains fresh ones (mirror
 //        of the Spotify AC #4 we landed during the Phase 2 close-out).
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import jwt from "jsonwebtoken";
+
+// IMPORTANT: snapshot data/tokens.json BEFORE importing apple.ts. The AC #3(d)
+// flow exercises handleCallback("fresh-nonce", "test-mut-value"), which writes
+// the fake MUT to the real tokens file. We restore the snapshot at exit so a
+// test run never leaves the user appearing "connected" with a junk MUT.
+const TOKENS_PATH = resolve(import.meta.dirname, "..", "..", "data", "tokens.json");
+const _hadTokensFile = existsSync(TOKENS_PATH);
+const _tokensSnapshot = _hadTokensFile ? readFileSync(TOKENS_PATH, "utf8") : null;
+function restoreTokens(): void {
+  if (_tokensSnapshot !== null) {
+    writeFileSync(TOKENS_PATH, _tokensSnapshot, { mode: 0o600 });
+  }
+}
+process.on("exit", restoreTokens);
+process.on("SIGINT", () => {
+  restoreTokens();
+  process.exit(130);
+});
+
 import {
   __test as appleTest,
   buildPopupStart,

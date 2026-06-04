@@ -422,3 +422,60 @@ Keep entries factual and terse.
   tests. Then PAUSE at ⏸C (Apple Developer setup) with copy-pasteable instructions;
   resume for ⏸D (UI consent) to verify AC #1 live. Apple delete-capability probe is
   **deferred** per the 2026-06-03 amendment.
+- Bugs found and fixed during ⏸C/⏸D run:
+  1. **Test pollution in `apple.test.ts`**: AC #3(d) called `handleCallback` with a
+     fake MUT, which wrote `"test-mut-value"` to the real `data/tokens.json` and
+     left the UI showing "Apple connected" with junk. Patched: test snapshots
+     `data/tokens.json` before importing `apple.ts` and restores it via a
+     `process.on("exit", …)` hook (also handles SIGINT). Without this, repeated
+     `npm test` runs silently corrupted the user's auth state.
+  2. **`secrets/` directory at `0755`**: blueprint §12 requires `0700`. The
+     loadPrivateKey path now tightens the parent dir to 0700 alongside the
+     existing .p8 → 0600 chmod. Verified: `drwx------ secrets/` after first read.
+  3. **CSRF meta tag NOT injected into `musickit.html`**: the static handler's
+     substring check `body.includes('name="csrf-token"')` matched the JS in the
+     popup that READS the tag (`document.querySelector('meta[name="csrf-token"]')`),
+     then ran a regex replace that found no actual `<meta>` and silently did
+     nothing. Every popup POST then 403'd as `csrf_token_invalid`. Patched: the
+     detection now uses a proper regex `/<meta\s+[^>]*\bname=["']csrf-token["']/`
+     that matches only an actual `<meta>` tag. Fix verified by re-curling both
+     `/` and `/musickit.html` — both now show the same per-server-start token.
+  4. **Stuck "Opening Apple Music authorization…" UI message**: the popup-watch
+     grace check hardcoded `spotifyStatusEl`, so after a successful Apple
+     connect the success path didn't clear the in-flight message. Patched: the
+     watcher now takes a `platform` arg and (a) clears the message when the
+     correct platform's status flips to connected, (b) checks the right element
+     in the 10s "did not complete" grace.
+  5. **`getTopChartSongs` parsed one extra `data[0]`**: actual shape is
+     `j.results.songs` is an **array** of chart containers; the songs live at
+     `[0].data`. Was reading `[0].data[0].data`. Fixed.
+- Live AC #1 verification (ephemeral script, deleted after run):
+  - **Storefront**: `us` resolved via `/v1/me/storefront`. ✅
+  - **Library playlists**: 27 playlists fetched. 4 editable (incl. "India Spice 🌶️",
+    "Sweat 🦾", "My Shazam Tracks", "GarageBand"). 23 read-only (Apple Music's
+    curated "Bollywood Chill", etc.). ✅
+  - **Library playlist tracks**: 118 tracks read from "India Spice 🌶️" via
+    `/v1/me/library/playlists/{id}/tracks`. ✅
+  - **Library songs**: 2 entries (GarageBand demos). ✅
+  - **ISRC lookup**: top chart song (Drake's "Janice STFU", ISRC USUG12604763)
+    derived dynamically per §11.1, then looked up via
+    `/v1/catalog/us/songs?filter[isrc]=USUG12604763` → 1 validated candidate. ✅
+- **Real finding for Phase 4 (matching engine).** Library-track responses
+  (`/v1/me/library/playlists/{id}/tracks` and `/v1/me/library/songs`) do NOT
+  expose `isrc` directly — the library object is a wrapper around a catalog
+  song, and the ISRC lives on the underlying catalog record. The matcher will
+  need either `?include=catalog` on library reads or a `playParams.catalogId`
+  → `/v1/catalog/{sf}/songs/{id}` follow-up hop. Catalog ISRC lookups (which
+  is what Tier-1 matching does in the Spotify→Apple direction) are unaffected.
+- **GarageBand pseudo-playlist** in Apple's library returns 404 on `/tracks`;
+  Phase 7's source-resolver should skip playlists named "GarageBand" (and
+  perhaps any with `playParams.kind === "library-recordings"`) to avoid
+  surfacing them as transfer sources. Noted.
+- Result: Phase 3 AC #1 ✅ (live), AC #2 ✅ (unit, popup JWT ES256/kid/iss +
+  TTL ≤ 605s + long-lived TTL ∈ (30d, 181d]), AC #3 ✅ (unit, nonce lifecycle
+  + single-use), AC #4 ✅ (unit, sweeper). **Total suite: 45/45 PASS**.
+  Apple delete-capability probe deferred per 2026-06-03 amendment.
+- Phase 3 done. Next: Phase 4 — matching engine (`identity.ts` + `scoring.ts`
+  + `matcher.ts`), ledger-backed cache. No pause points. Will land the
+  `?include=catalog` / `catalogId`-lookup hop for library-side ISRCs as part
+  of the Apple-side matcher.
