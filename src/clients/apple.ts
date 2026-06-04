@@ -185,10 +185,31 @@ export function libraryCatalogId(s: AppleLibrarySong): string | undefined {
 export async function listLibraryPlaylistTracks(playlistId: string): Promise<AppleLibrarySong[]> {
   // ?include=catalog embeds the catalog song under relationships.catalog —
   // this is the only way to surface ISRC on library reads.
-  return paginate<AppleLibrarySong>(
-    `/v1/me/library/playlists/${encodeURIComponent(playlistId)}/tracks?limit=100&include=catalog`,
-    authedHeaders(),
-  );
+  try {
+    return await paginate<AppleLibrarySong>(
+      `/v1/me/library/playlists/${encodeURIComponent(playlistId)}/tracks?limit=100&include=catalog`,
+      authedHeaders(),
+    );
+  } catch (err) {
+    // Apple API hazard (§6): a playlist with ZERO tracks returns 404 on its
+    // `/tracks` relationship — error code 40403 / "No related resources" —
+    // instead of an empty list. That is NOT a failure: it means the
+    // destination is empty, so the correct skip-set is []. Absorb ONLY that
+    // specific shape; a genuinely-missing playlist (code 40400 / "Resource
+    // Not Found") still propagates so we don't silently treat a typo'd id as
+    // empty and then write the entire source into the wrong/nonexistent place.
+    if (isEmptyRelationship404(err)) return [];
+    throw err;
+  }
+}
+
+/** True iff `err` is the Apple "this relationship has no members" 404 (an
+ * empty playlist's tracks), as opposed to a missing-resource 404. Exported for
+ * unit testing the discrimination. */
+export function isEmptyRelationship404(err: unknown): boolean {
+  if (!(err instanceof HttpError) || err.status !== 404) return false;
+  const body = err.body ?? "";
+  return body.includes("40403") || /no related resources/i.test(body);
 }
 
 // ── Library songs (the "Library" collection — distinct from Favorites) ────

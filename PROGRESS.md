@@ -1190,3 +1190,26 @@ reconnect-hint *wording*; one fix covered both, plus a sibling pre-existing case
   fresh playlist (re-adds all matched tracks)".
 
 Re-verified: `node --check` clean, `tsc --noEmit` clean, **288 PASS / 0 FAIL**. No deps; UI-only.
+
+### 2026-06-04 — Live-test hotfix: Apple empty-playlist 404 on `/tracks`
+
+First human-supervised **Spotify → Apple** live run (308-track "Sweat" → existing empty Apple
+"Sweat" playlist) aborted at destination-read: Apple returns **HTTP 404 / code 40403 /
+"No related resources"** on the `/tracks` relationship of a ZERO-track playlist instead of an
+empty list. The 404 propagated through `readDestination` → runner top-level catch → SSE
+`error` → the new disconnect UI ("disconnected — partial: read 308 · matched 0 …"). The
+disconnect-recovery from the Phase 8 sweep worked exactly as designed (copy buttons + partial
+summary shown), which is how the error body was captured.
+
+- **Fix** (`src/clients/apple.ts`): `listLibraryPlaylistTracks` wraps `paginate` and absorbs
+  ONLY the empty-relationship 404 (`HttpError.status===404` AND body includes `40403` or
+  "no related resources", case-insensitive) → returns `[]`. A genuinely-missing playlist
+  (`code 40400`) still throws, so a typo'd id can't masquerade as empty and trigger a full
+  write into the wrong place. Exported `isEmptyRelationship404` for testing.
+- **Test** (`src/clients/apple.test.ts`, +8 assertions, wired into `npm test`): 40403/title →
+  true; 40400 → false (propagates); non-404 → false; non-HttpError/null/undefined → false.
+- **Docs**: blueprint §6.6 hazard note + §15 amendment row (2026-06-04).
+- Verified: `tsc --noEmit` clean, **296 PASS / 0 FAIL**. Additive-only intact (empty
+  destination ⇒ all matched tracks added). No deps.
+- **Next**: re-run the same Spotify → Apple transfer — destination-read now returns [] and the
+  308 matched tracks should write. Then the Apple → Spotify direction for the §14 DoD.
