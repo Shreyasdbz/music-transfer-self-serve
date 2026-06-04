@@ -1136,3 +1136,30 @@ discipline held; the sweep confirmed the redaction claim end-to-end). Fixes (all
 
 Re-verified: `node --check web/app.js` clean, `tsc --noEmit` clean, **288 PASS / 0 FAIL**. No
 deps added; no `src/` logic changed (UI-only).
+
+### 2026-06-04 — Phase 9: Publish prep
+
+- Start: final repo-wide secrets audit, README setup walkthrough, license — then the ⏸E pause
+  (ask the human before creating/pushing any GitHub remote; never create it autonomously).
+- **License.** Human chose **MIT**. Added `LICENSE` (MIT, © 2026 Shreyas / @shreyasdbz) and set
+  `package.json` `"license": "MIT"` + `"author"`. Kept `"private": true` — it only blocks an
+  accidental `npm publish` to the registry; it does not affect GitHub sharing, and this is a
+  personal GitHub-shared tool, not an npm package. README gained a License section stating this.
+- **README.** Already complete against the §14 DoD from prior phases (setup covering all four
+  credential pause points + the preflight step, the Safari HTTPS-Only caveat, launch
+  instructions, dev helpers, the honest additive-only / no-removals / Apple-asymmetry posture).
+  Phase 9 touch-ups: documented the Phase 8 Copy summary / Copy log buttons and the
+  reconnect-on-lapsed-token guidance in the Usage section.
+- **Final secrets audit (repo-wide, tracked files).**
+  - No `.env`, `.p8`, `secrets/`, `data/`, `tokens.json`, or `*.sqlite*` tracked. ✓
+  - No real `BEGIN PRIVATE KEY` block in any tracked file — the only matches are (a) docs
+    *about* the audit (CLAUDE.md/blueprint.md/PROGRESS.md) and (b) `src/util/log.test.ts`'s
+    obvious fake fixture (`FAKEKEYBYTESforTESTfixtureONLY`). ✓
+  - No real `APPLE_TEAM_ID` / `APPLE_KEY_ID` values in tracked files (`.env.example` ships
+    blanks + the placeholder `AuthKey_XXXXXXXXXX.p8`). ✓
+  - No bearer/JWT-shaped tokens tracked — the only long-string hits are npm `integrity` SRI
+    hashes in `package-lock.json`. ✓
+- AC: **clean repo, no secrets/data tracked** — satisfied. `tsc --noEmit` clean, **288 PASS /
+  0 FAIL**. Invariants intact (additive-only, secrets discipline). No deps added.
+- **⏸ PAUSE POINT E (optional):** stopping here. Awaiting the human's decision on whether to
+  create/push a GitHub remote. Will not create the remote autonomously.

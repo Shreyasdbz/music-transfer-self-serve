@@ -121,6 +121,10 @@ npm test         # run the AC unit tests
      destination side when the Operation runs.
 5. Press **Run**. The Run panel streams live status: the current stage, a progress bar, an
    event log (matched / skipped / written / unmatched / failed), and a final summary card.
+   On completion, **Copy summary (JSON)** and **Copy log** buttons let you grab the full
+   run for sharing or debugging. If a write fails because a token lapsed, the log names the
+   exact reconnect button to click; failed preflight checks do the same in the Permissions
+   panel.
 
 Re-running the same Operation when the source hasn't changed is a no-op — every item is
 already on the destination. Past Operations are listed in the Run panel's
@@ -140,3 +144,9 @@ remove entries from `.gitignore`.
   phases. The §15 Amendment log tracks spec evolution.
 - `CLAUDE.md` — operating manual for the coding agent that builds and maintains this.
 - `PROGRESS.md` — build log.
+
+## License
+
+[MIT](./LICENSE) © Shreyas (@shreyasdbz). `package.json` keeps `"private": true` to prevent
+accidental publishing to the npm registry — this is a GitHub-shared personal tool, not an
+npm package.
