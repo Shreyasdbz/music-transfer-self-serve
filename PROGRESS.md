@@ -199,3 +199,57 @@ Keep entries factual and terse.
      amendment — nothing to delete.
 - Next: Phase 1 — ledger schema + HTTP server skeleton + §11.0 security framework
   (127.0.0.1 bind, Host/Origin middleware, CSRF token, startup reconciliation sweep).
+
+### 2026-06-03 — Phase 1: Ledger + HTTP server skeleton + security framework
+
+- Start: implement `src/config.ts` (env load + validate), `src/util/log.ts` (redaction
+  skeleton per §12), `src/ledger/db.ts` (§9 schema + WAL/foreign_keys/synchronous PRAGMAs
+  + forward migration runner + §12.5 startup reconciliation sweep + file-perm hardening),
+  `src/http/server.ts` (built-in `http`, bound to 127.0.0.1:8888 only; Host check on all
+  routes; Origin + X-CSRF-Token check on POSTs; per-server-start CSRF token injected as
+  `<meta name="csrf-token">`; static handler for `web/`; `GET /api/health`), and
+  `src/server.ts` entrypoint that wires them.
+- Decisions:
+  - `config.ts` exposes both `checkEnv()` (soft predicate, used by the future preflight
+    `env` check) and `loadConfig()` (throws on missing keys, used by code paths that
+    cannot run without creds). Constants centralize the redirect URI and Host/Origin
+    strings so the §4 byte-equality check Phase 2 enforces is a literal `===` against
+    `SPOTIFY_REDIRECT_URI_EXPECTED`.
+  - `util/log.ts` captures `APPLE_TEAM_ID` / `APPLE_KEY_ID` at module init for redaction
+    (per §12). Note the ordering caveat: the logger must be imported _after_ `dotenv` —
+    in practice that's already true because every entry point goes through `config.ts`
+    first (which calls `loadDotenv()`), then anything else.
+  - `ledger/db.ts` keeps migrations as a numbered map and runs them in version-numbered
+    transactions; the upsert of `schema_version` lives inside the transaction so a
+    crash mid-migration leaves the DB at the previous version (the next run replays).
+    The startup sweep is a separate transaction so its own logging never overlaps a
+    migration's; both the `operation_events` `interrupted` append and the row update
+    happen atomically. WAL + `synchronous=NORMAL` per §9; foreign_keys forward-investment.
+  - `http/server.ts` uses a simple route-table dispatcher rather than a router lib;
+    Phase 2+ phases register routes via the exported `route()` helper, keeping the
+    middleware (Host / Origin / CSRF) in one place. The CSRF token rotates per
+    server-start, is base64url(32 random bytes), and is injected into HTML by
+    `http/static.ts` via a `<meta>` tag rewrite — no separate template engine. POST
+    `/api/health` exists only as the Phase 1 AC fixture for CSRF/Origin enforcement.
+  - File-perm hardening (0700 on `data/`, 0600 on `ledger.sqlite*`) runs both before
+    and after migrations because WAL files come into existence with the first write.
+- Result: AC met.
+  1. `npm start` boots: `data/ledger.sqlite` created at mode `0600`, `data/` at `0700`,
+     `schema_version` row = `1`, every §9 table + index present (verified via
+     `sqlite_master`). ✅
+  2. `GET /api/health` from `127.0.0.1:8888` → `200 {"ok":true}`; the same request to
+     `localhost:8888` → `403 host_header_invalid` (Host mismatch). ✅
+  3. `POST /api/health` without `X-CSRF-Token` → `403 csrf_token_invalid`; with a wrong
+     token → `403 csrf_token_invalid`; with the served token (extracted from
+     `<meta name="csrf-token">`) + correct Origin → `200 {"ok":true,"method":"post"}`;
+     with correct CSRF but wrong Origin → `403 origin_invalid`. ✅
+  4. Seeded a `running` `operations` row + a `running` `preflight_runs` row, restarted
+     the server, observed `ledger.reconciled_stranded_running` log line with
+     `{operations:1, preflight_runs:1}`. Both rows now `interrupted` with
+     `finished_at` set; the operation has a final `operation_events` row of type
+     `interrupted` with payload `{"reason":"server_restart_during_run"}`. ✅
+- Deps added: `@types/better-sqlite3` (dev) — required by the strict tsconfig once
+  `better-sqlite3` is imported. Counts as part of the §2 standard dev tooling.
+- Next: Phase 2 — Spotify PKCE flow, the §11.0 OAuth `state` + `code_verifier` store
+  with 10-minute TTL, refresh handling, read client, and Spotify Connect button
+  reaching ⏸A / ⏸B.
