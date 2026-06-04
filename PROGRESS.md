@@ -1070,3 +1070,39 @@ Keep entries factual and terse.
   suites. Lint + build clean. No invariant weakened; the fixes strengthen duplication
   safety (the project's explicit bar for write phases).
 - Next: Phase 8 — UX polish.
+
+### 2026-06-04 — Phase 8: UX polish
+
+- Start: reconnect prompts on auth failure (UI surfaces a per-platform "Reconnect" CTA
+  when the gate auto-invalidates or a 401 surfaces, beyond Phase 5's silent invalidation),
+  actionable error messages at each credential boundary (named env var + exact next click;
+  401 → which token + which reconnect button), copyable event-log + JSON summary on the Run
+  panel, and a final redaction check (util/log.ts redacts Authorization + Music-User-Token;
+  no token shape reaches logs). No pause points.
+- End: shipped all four sub-tasks.
+  - **P8-1 reconnect prompts.** `RECONNECT_FOR_CHECK` maps each auth check
+    (`spotify_token`/`spotify_scopes`/`spotify_me` → Connect Spotify; `apple_mut`/`apple_dev_token`
+    → Connect Apple Music) to an inline `.reconnect-cta` button rendered on a failed check in
+    `renderCheck`. The gate banner appends a reconnect hint when the gate reason matches an
+    auth-failure/scope pattern. This makes Phase 5's silent gate invalidation actionable.
+  - **P8-2 actionable errors.** Audited every credential boundary. `config.ts` already names the
+    missing var + points to `.env.example` (`Missing Spotify env vars: … (see .env.example)`),
+    and both connect flows surface that 500 body verbatim (`connectSpotify` directly; Apple via
+    `musickit.html`). Added: a mid-run write failure with status 401/403 now appends
+    `→ reconnect <destination> (auth lapsed), then re-run — already-written tracks will skip`
+    instead of a bare status code (§11.1 actionable-on-401, applied to the run path).
+  - **P8-3 copyable log + summary + redaction.** Run panel gained a Copy summary (JSON) / Copy
+    log pair (`#run-copy-actions`, revealed on the terminal `done` event); summary is the
+    pretty-printed status+counts, log is the visible `.run-log-line` text, both via
+    `navigator.clipboard` (127.0.0.1 counts as a secure context). Final redaction sweep
+    confirmed: `util/log.ts` redacts `authorization`, `music-user-token`,
+    `x-apple-music-user-token`; `util/http.ts` runs response headers through `redactHeaders`;
+    zero raw `console.*` in `src/`; the only token-adjacent `log.info` (`apple.ts:170`) emits
+    just `lifetime_days`.
+  - **P8-4 tests + commit.** No new logic in typechecked `src/` (Phase 8 is UI-only in
+    untyped `web/`), so the regression bar is the existing suite: **288 PASS / 0 FAIL**, clean
+    `tsc --noEmit`, clean `eslint src --max-warnings=0`.
+- AC result: **PASS.** Reconnect CTAs appear on auth-check failure and gate invalidation;
+  every credential boundary names its var/token + the exact next click; the event log and JSON
+  summary are one-click copyable; redaction verified end-to-end. No invariants touched
+  (additive-only, secrets discipline intact). No deps added.

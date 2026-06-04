@@ -286,3 +286,17 @@ button:hover:not(:disabled) {
   padding: 0.2rem 0;
   color: var(--muted);
 }
+
+/* ── Phase 8: reconnect CTA + copy ─────────────────────────────────── */
+.reconnect-cta {
+  font-size: 0.78rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 5px;
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  background: #fff;
+  cursor: pointer;
+}
+.reconnect-cta:hover {
+  background: #fdf3e3;
+}

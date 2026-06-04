@@ -178,6 +178,17 @@ function detailLine(detail) {
     .join(" ");
 }
 
+// Auth/credential checks whose failure is fixed by reconnecting a platform —
+// when one fails, the check row gets an inline "Reconnect" action that drives
+// the same popup as the Auth panel button (§13 Phase 8: exact next click).
+const RECONNECT_FOR_CHECK = {
+  spotify_token: { label: "Reconnect Spotify", action: () => connectSpotify() },
+  spotify_scopes: { label: "Reconnect Spotify to re-consent", action: () => connectSpotify() },
+  spotify_me: { label: "Reconnect Spotify", action: () => connectSpotify() },
+  apple_mut: { label: "Reconnect Apple Music", action: () => connectApple() },
+  apple_dev_token: { label: "Reconnect Apple Music", action: () => connectApple() },
+};
+
 function renderCheck(evt) {
   const list = groupList(checkGroup(evt.name));
   let li = list.querySelector(`li[data-name="${evt.name}"]`);
@@ -189,6 +200,17 @@ function renderCheck(evt) {
   li.className = `check-${evt.status}`;
   const detail = detailLine(evt.detail);
   li.textContent = `${MARK[evt.status] ?? "?"} ${evt.name}${detail ? " — " + detail : ""}`;
+  // Inline reconnect CTA on a failed auth check.
+  const cta = RECONNECT_FOR_CHECK[evt.name];
+  if (evt.status === "fail" && cta) {
+    const a = document.createElement("button");
+    a.type = "button";
+    a.className = "reconnect-cta";
+    a.textContent = cta.label;
+    a.addEventListener("click", cta.action);
+    li.appendChild(document.createTextNode("  "));
+    li.appendChild(a);
+  }
 }
 
 async function refreshGate() {
@@ -205,8 +227,15 @@ async function refreshGate() {
 
 function applyGate(gate) {
   gateBanner.hidden = false;
-  gateBanner.textContent = gate.open ? "✅ Permissions check passed — Catalog and Run are enabled." : `🔒 ${gate.reason}`;
   gateBanner.dataset.state = gate.open ? "open" : "closed";
+  if (gate.open) {
+    gateBanner.textContent = "✅ Permissions check passed — Catalog and Run are enabled.";
+  } else {
+    // When the gate closed because of an auth/scope failure (auto-invalidation),
+    // point the user at the fix: re-check, then reconnect the failing platform.
+    const authClosed = /auth failure|scope\/permission/i.test(gate.reason || "");
+    gateBanner.textContent = `🔒 ${gate.reason}` + (authClosed ? "  Run Check permissions; the failing check will offer a Reconnect button." : "");
+  }
   for (const btn of [updateCatalogBtn, runBtn]) {
     btn.disabled = !gate.open;
     btn.title = gate.open ? "" : gate.reason;
@@ -637,7 +666,13 @@ function watchOperation(id) {
     const p = JSON.parse(e.data);
     if (p.kind === "write_failed") {
       counts.failed++;
-      appendLog(`! failed  ${p.source_id} (status ${p.status})`);
+      // A 401/403 mid-run means the destination token/scope lapsed. Name the
+      // exact fix (§11.1 actionable errors) instead of a bare status code.
+      const fix =
+        p.status === 401 || p.status === 403
+          ? `  → reconnect ${selectedDestination() === "spotify" ? "Spotify" : "Apple Music"} (auth lapsed), then re-run — already-written tracks will skip`
+          : "";
+      appendLog(`! failed  ${p.source_id} (status ${p.status})${fix}`);
     } else if (p.message) {
       appendLog(`! error  ${p.message}`);
     }
@@ -653,6 +688,10 @@ function watchOperation(id) {
     runSummary.hidden = false;
     runSummary.textContent = `${p.status}: read ${s.read} · matched ${s.matched} · skipped ${s.skipped} · written ${s.written} · unmatched ${s.unmatched} · failed ${s.failed}` + (logCount > LOG_CAP ? `  (showing last ${LOG_CAP} of ${logCount} events)` : "");
     operationStatus.textContent = `done (${p.status})`;
+    // Stash for the copy buttons + reveal them.
+    lastOperationId = id;
+    lastSummaryJson = JSON.stringify({ status: p.status, ...s }, null, 2);
+    document.getElementById("run-copy-actions").hidden = false;
     loadPastOperations();
   });
   es.onerror = () => {
@@ -683,6 +722,27 @@ async function loadPastOperations() {
 document.getElementById("operation-form").addEventListener("submit", (e) => {
   e.preventDefault();
   submitOperation();
+});
+
+// Copy buttons (run-panel). Summary is held in lastSummaryJson; the log is the
+// visible run-log text. clipboard.writeText needs a secure context, but
+// 127.0.0.1 counts as secure for the Clipboard API.
+let lastOperationId = null;
+let lastSummaryJson = "";
+const copyStatus = document.getElementById("copy-status");
+async function copyText(text, label) {
+  try {
+    await navigator.clipboard.writeText(text);
+    copyStatus.textContent = `${label} copied`;
+  } catch {
+    copyStatus.textContent = "copy failed (clipboard blocked)";
+  }
+  setTimeout(() => (copyStatus.textContent = ""), 2000);
+}
+document.getElementById("copy-summary").addEventListener("click", () => copyText(lastSummaryJson, "summary"));
+document.getElementById("copy-log").addEventListener("click", () => {
+  const lines = [...runLog.querySelectorAll(".run-log-line")].map((d) => d.textContent).join("\n");
+  copyText(lines, "log");
 });
 
 // ── Disambiguation modal ────────────────────────────────────────────────
