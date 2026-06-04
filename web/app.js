@@ -552,13 +552,131 @@ async function submitOperation(extraDest = {}) {
       operationStatus.textContent = `cannot resolve ${body.side}: ${body.error}`;
       return;
     }
-    if (r.status === 501) {
-      operationStatus.textContent = "resolved ✓ (transfer runner lands in Phase 7)";
+    if (r.status === 409) {
+      operationStatus.textContent = "an operation is already running";
+      return;
+    }
+    if (r.status === 202 && body.id) {
+      operationStatus.textContent = "running…";
+      watchOperation(body.id);
       return;
     }
     operationStatus.textContent = r.ok ? "ok" : `error ${r.status}: ${body.error ?? ""}`;
   } catch (err) {
     operationStatus.textContent = `error: ${err.message}`;
+  }
+}
+
+// ── Run panel ───────────────────────────────────────────────────────────
+
+const runStage = document.getElementById("run-stage");
+const runProgress = document.getElementById("run-progress");
+const runCounts = document.getElementById("run-counts");
+const runLog = document.getElementById("run-log");
+const runSummary = document.getElementById("run-summary");
+
+const LOG_CAP = 500;
+
+function watchOperation(id) {
+  operationRunning = true;
+  updateRunEnabled();
+  runLog.hidden = false;
+  runLog.innerHTML = "";
+  runSummary.hidden = true;
+  const counts = { matched: 0, skipped: 0, written: 0, unmatched: 0, failed: 0 };
+  let read = 0;
+  let logCount = 0;
+
+  const appendLog = (line) => {
+    logCount++;
+    const div = document.createElement("div");
+    div.className = "run-log-line";
+    div.textContent = line;
+    runLog.appendChild(div);
+    // Virtualize: keep only the last LOG_CAP lines in the DOM.
+    while (runLog.childElementCount > LOG_CAP) runLog.removeChild(runLog.firstChild);
+  };
+  const renderCounts = () => {
+    runCounts.textContent = `read ${read} · matched ${counts.matched} · skipped ${counts.skipped} · written ${counts.written} · unmatched ${counts.unmatched} · failed ${counts.failed}`;
+  };
+
+  const es = new EventSource(`/api/operations/${id}/events`);
+  es.addEventListener("stage", (e) => {
+    const p = JSON.parse(e.data);
+    const stage = p.stage ?? "";
+    if (p.count !== undefined && stage === "source_read") read = p.count;
+    runStage.textContent = `Stage: ${stage}${p.count !== undefined ? " (" + p.count + ")" : ""}`;
+    renderCounts();
+  });
+  es.addEventListener("match", (e) => {
+    const p = JSON.parse(e.data);
+    counts.matched++;
+    appendLog(`✓ match  ${p.title ?? p.source_id} → ${p.dest_id} (${p.tier}, ${p.from_cache ? "cached" : "live"})${p.revalidated ? " [revalidated]" : ""}`);
+    renderCounts();
+  });
+  es.addEventListener("skip", (e) => {
+    const p = JSON.parse(e.data);
+    counts.skipped++;
+    appendLog(`– skip   ${p.title ?? p.source_id} (${p.reason})`);
+    renderCounts();
+  });
+  es.addEventListener("write", (e) => {
+    const p = JSON.parse(e.data);
+    counts.written++;
+    appendLog(`▶ write  ${p.source_id} → ${p.dest_id}`);
+    renderCounts();
+  });
+  es.addEventListener("unmatched", (e) => {
+    const p = JSON.parse(e.data);
+    counts.unmatched++;
+    appendLog(`✗ unmatched  ${p.title ?? p.source_id} — ${p.artist ?? ""}`);
+    renderCounts();
+  });
+  es.addEventListener("error", (e) => {
+    if (!e.data) return;
+    const p = JSON.parse(e.data);
+    if (p.kind === "write_failed") {
+      counts.failed++;
+      appendLog(`! failed  ${p.source_id} (status ${p.status})`);
+    } else if (p.message) {
+      appendLog(`! error  ${p.message}`);
+    }
+    renderCounts();
+  });
+  es.addEventListener("done", (e) => {
+    es.close();
+    operationRunning = false;
+    updateRunEnabled();
+    const p = JSON.parse(e.data);
+    const s = p.summary ?? counts;
+    runStage.textContent = `Done — ${p.status}`;
+    runSummary.hidden = false;
+    runSummary.textContent = `${p.status}: read ${s.read} · matched ${s.matched} · skipped ${s.skipped} · written ${s.written} · unmatched ${s.unmatched} · failed ${s.failed}` + (logCount > LOG_CAP ? `  (showing last ${LOG_CAP} of ${logCount} events)` : "");
+    operationStatus.textContent = `done (${p.status})`;
+    loadPastOperations();
+  });
+  es.onerror = () => {
+    es.close();
+    operationRunning = false;
+    updateRunEnabled();
+  };
+}
+
+async function loadPastOperations() {
+  try {
+    const r = await fetch("/api/operations", { headers: { Accept: "application/json" } });
+    const j = await r.json();
+    const list = document.getElementById("past-ops-list");
+    list.innerHTML = "";
+    for (const op of j.operations ?? []) {
+      const li = document.createElement("li");
+      const summary = op.summary ? JSON.parse(op.summary) : null;
+      const tag = op.status === "interrupted" ? " — re-run to resume (already-written items skip)" : "";
+      li.textContent = `${op.source}→${op.destination}  ${op.status}${summary ? ` (${summary.written} written, ${summary.unmatched} unmatched)` : ""}${tag}`;
+      list.appendChild(li);
+    }
+  } catch {
+    /* ignore */
   }
 }
 
@@ -627,3 +745,4 @@ window.addEventListener("focus", () => {
 refreshAuthStatus();
 refreshGate();
 loadCatalog();
+loadPastOperations();

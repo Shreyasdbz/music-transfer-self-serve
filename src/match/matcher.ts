@@ -16,7 +16,7 @@
 // All matches are cached in the ledger `tracks` table so re-runs of the
 // same operation skip the live calls (§8).
 
-import { searchByIsrc as appleSearchByIsrc, searchCatalog as appleSearchCatalog, type AppleCatalogSong } from "../clients/apple.js";
+import { searchByIsrc as appleSearchByIsrc, searchCatalog as appleSearchCatalog, libraryIsrc, libraryCatalogId, type AppleCatalogSong, type AppleLibrarySong } from "../clients/apple.js";
 import { searchTracksByIsrc as spotifySearchByIsrc, searchTracks as spotifySearchTracks, type SpotifyTrack } from "../clients/spotify.js";
 import { getCachedTrack, putCachedTrack } from "../ledger/tracksCache.js";
 import { durationsClose, identityKey, normalize, normArtist, normIsrc, normTitle, type CanonicalTrack } from "./identity.js";
@@ -121,6 +121,32 @@ export function appleCatalogToCanonical(t: AppleCatalogSong): CanonicalTrack {
     source: "apple",
     sourceId: t.id,
   };
+}
+
+/** Adapter for an Apple LIBRARY song (a source-side track when the source is
+ * Apple). The library wrapper doesn't expose ISRC directly — `libraryIsrc`
+ * reads the embedded catalog relationship (populated by `?include=catalog`).
+ * `sourceId` is the LIBRARY id (what we read), while the catalog id (for
+ * Apple→Apple writes, unused in v1) is available via `libraryCatalogId`. */
+export function appleLibraryToCanonical(s: AppleLibrarySong): CanonicalTrack {
+  const rating = s.attributes.contentRating;
+  return {
+    isrc: normIsrc(libraryIsrc(s)),
+    title: s.attributes.name,
+    primaryArtist: s.attributes.artistName,
+    artists: [s.attributes.artistName],
+    album: s.attributes.albumName,
+    durationMs: s.attributes.durationInMillis,
+    explicit: rating === undefined ? undefined : rating === "explicit",
+    source: "apple",
+    sourceId: s.id,
+  };
+}
+
+/** Catalog id for an Apple library source track — the id the matcher's
+ * Apple→Spotify direction or an Apple-side write would use. */
+export function appleLibraryCatalogId(s: AppleLibrarySong): string | undefined {
+  return libraryCatalogId(s);
 }
 
 // ── Disambiguation (§7 Tier 1) ─────────────────────────────────────────

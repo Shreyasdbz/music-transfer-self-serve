@@ -963,3 +963,68 @@ Keep entries factual and terse.
   422s, brand-new→create, dropdown-id passthrough. **Suite: 262/262 PASS** across 12 suites.
   Lint + build clean. No invariant weakened; the §9 live-library fix strengthens
   non-duplication. Ledger restored from backup after the live run.
+
+### 2026-06-04 — Phase 7: Operation runner (the additive transfer engine)
+
+- Pre-build readiness review (human-requested before this write-enabled phase). Verified
+  every WRITE endpoint live (3 parallel agents: codebase inventory + Spotify docs + Apple
+  docs). **Headline finding: Spotify's Feb-2026 migration renamed ALL four write/
+  idempotency routes** (not just the read `/tracks`→`/items` we found in Phase 2) and
+  switched save/contains from `ids`→`uris`, caps 50→40 — coding from the old priors would
+  have failed silently. **Apple favorites resolved in our favour**: `POST /v1/me/favorites`
+  exists (one-way, no un-favorite), so an Apple-Favorites destination is a real write, not
+  report-only (§6.3 concern closed). Recorded in blueprint §6.6 + §15 amendment.
+  Human chose: throwaway-playlist supervised live test, Spotify→Apple first.
+- Built:
+  - **Write clients** (verified §6.6 endpoints): spotify `createPlaylist` (/me/playlists),
+    `addItemsToPlaylist` (/items, uris, 100), `saveToLibrary` (/me/library, uris, 40),
+    `savedContains` (/me/library/contains, uris, 40); apple `createLibraryPlaylist`
+    (returns p.XXX), `addTracksToLibraryPlaylist` (flat `{data:[{id,type:"songs"}]}`,
+    sequential 100), `favoriteSongs` (POST /me/favorites?ids). All use the existing
+    AUTH_EXTRAS (refresh-on-401 + gate-invalidation opt-in).
+  - **`appleLibraryToCanonical`** adapter (source-side Apple library → CanonicalTrack;
+    ISRC via the embedded catalog relationship).
+  - **`ledger/operationsStore.ts`** — insert/finish (one-running 409), events by seq,
+    list, and the §12.5 `priorWrittenDestIds` resume union (collects `write`-event dest
+    ids for the same Operation tuple).
+  - **`operation/{types,deps,runner}.ts`** — the §8 engine: read S → read D (+ resume
+    union) → per-track identity-skip / match / unmatched → create dest if needed → write
+    in source order (batched happy path; per-track fallback for failure isolation + 404
+    auto-revalidation) → persist event log + summary. `deps.ts` is an injectable client
+    surface (`__setOperationDeps`) so the runner is fully testable with ZERO real writes.
+    Additive only: no remove/reorder path exists.
+  - **HTTP**: the 501 became `POST /api/operations` → 202 {id} (409 if running); plus
+    `GET /api/operations`, `GET /api/operations/:id`, `GET /api/operations/:id/events`
+    (SSE, `id:`=seq, Last-Event-ID replay-from-ledger, terminal `done`).
+  - **Run panel UI**: live stage + aggregate counters + event log virtualized to the last
+    500 lines, summary card, past-operations disclosure (interrupted rows hint "re-run to
+    resume").
+- Tests: `operation/runner.test.ts` — 18 assertions, all 7 ACs via injected fakes
+  (idempotency, skip-present, mid-run failure→partial, rematch from_cache=false, 404
+  auto-revalidation, one-running conflict, SSE seq/replay). **NOTE:** writing these caught
+  that reusing the same Operation tuple across test cases made the §12.5 resume-union
+  correctly skip prior writes — fixed by giving each test a distinct destination name (the
+  union working as designed, not a bug).
+- **Supervised LIVE test (real accounts, throwaway playlist):**
+  - Spotify "Video Hard 🎬" (2 tracks) → NEW Apple playlist "MTSS Test" (`p.oOzA2DgF83o8oZ`).
+    Both tracks matched via ISRC (Victory Lap, Midnight City, confidence 100, tier=isrc)
+    and written. status=succeeded, summary {read:2, matched:2, written:2, unmatched:0,
+    failed:0}. **Verified the renamed/new endpoints work end-to-end:** create-library-
+    playlist + add-tracks (flat body, catalog ids).
+  - **Idempotency re-run** (same source, dest name "MTSS Test" → now resolves to the
+    existing playlist via the Phase-6 live-library search): read D → both present →
+    skipped 2, **written 0**. AC #2 ✅.
+  - **SSE Last-Event-ID: 8** on the finished op replayed only seq 9–12 then closed. AC #6 ✅.
+  - The "MTSS Test" playlist is left in the Apple library for the human to delete — the
+    tool never auto-deletes (additive-only).
+- **Known limitation (noted, additive-safe):** re-running a `create`-destination operation
+  within the Apple eventual-consistency window (~seconds) before the new playlist's tracks
+  are indexed AND before the same-name re-resolution finds it could append duplicates
+  (the resume-union doesn't bridge a `create`→`playlist` tuple change). This only adds, never
+  removes, and a human re-running a transfer within seconds is unrealistic; settled in ≤10s
+  in the live test. A Phase-8 hardening could record the created playlist id against the
+  create tuple.
+- **Suite: 280/280 PASS** across 13 suites. Lint + build clean. Favorites `type:songs`
+  acceptance not yet live-probed (no favorites destination exercised this run) — will probe
+  on first Apple-Favorites-destination use per §6.6.
+- Next: Phase 8 — UX polish (reconnect prompts, error legibility), then Phase 9 publish prep.

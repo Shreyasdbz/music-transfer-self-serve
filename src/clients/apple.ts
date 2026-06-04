@@ -9,7 +9,7 @@
 // hit the endpoint on every catalog search; preflight re-resolves on each run.
 
 import { forceResignDevToken, getLongLivedDevToken, getMut } from "../auth/apple.js";
-import { httpJson, type HttpRequest } from "../util/http.js";
+import { httpJson, httpRequest, HttpError, type HttpRequest } from "../util/http.js";
 
 const API = "https://api.music.apple.com";
 const MAX_PAGES = 200;
@@ -307,4 +307,61 @@ export async function getTopChartSongs(limit = 1): Promise<AppleCatalogSong[]> {
       ...AUTH_EXTRAS,
   });
   return r.results?.songs?.[0]?.data ?? [];
+}
+
+// ── Writes (Phase 7) ────────────────────────────────────────────────────
+//
+// Endpoints verified live 2026-06-04 (blueprint §6.6). Add-tracks body is FLAT
+// `{data:[{id,type:"songs"}]}` (over-nesting is the common 4xx); catalog song
+// ids are accepted directly (no pre-add-to-library). Apple documents no batch
+// max → conservative sequential batches. Writes may lag reads (handled by the
+// §12.5 resume union).
+
+export const APPLE_ADD_BATCH = 100;
+
+function writeHeaders(): Record<string, string> {
+  return { ...authedHeaders(), "Content-Type": "application/json" };
+}
+
+/** Create an empty library playlist (POST /v1/me/library/playlists). Returns
+ * its `p.XXXX` library id. Tracks are added separately so we can batch. */
+export async function createLibraryPlaylist(name: string, description = ""): Promise<string> {
+  const r = await httpJson<{ data: { id: string }[] }>({
+    method: "POST",
+    url: `${API}/v1/me/library/playlists`,
+    headers: writeHeaders(),
+    body: JSON.stringify({ attributes: { name, description } }),
+    ...AUTH_EXTRAS,
+  });
+  const id = r.data[0]?.id;
+  if (!id) throw new Error("apple_create_playlist_no_id");
+  return id;
+}
+
+/** Append catalog songs to a library playlist (append-only). Sequential
+ * batches (no concurrent adds) per §6.1. */
+export async function addTracksToLibraryPlaylist(playlistId: string, catalogSongIds: string[]): Promise<void> {
+  for (let i = 0; i < catalogSongIds.length; i += APPLE_ADD_BATCH) {
+    const chunk = catalogSongIds.slice(i, i + APPLE_ADD_BATCH);
+    const r = await httpRequest({
+      method: "POST",
+      url: `${API}/v1/me/library/playlists/${encodeURIComponent(playlistId)}/tracks`,
+      headers: writeHeaders(),
+      body: JSON.stringify({ data: chunk.map((id) => ({ id, type: "songs" })) }),
+      ...AUTH_EXTRAS,
+    });
+    if (r.status < 200 || r.status >= 300) throw new HttpError(r.status, r.text, "apple_add_tracks");
+  }
+}
+
+/** Favorite catalog songs (POST /v1/me/favorites?ids=…). One-way (no
+ * un-favorite API). Re-favoriting is a harmless no-op, so this is safe to
+ * call idempotently. */
+export async function favoriteSongs(catalogSongIds: string[]): Promise<void> {
+  for (let i = 0; i < catalogSongIds.length; i += APPLE_ADD_BATCH) {
+    const chunk = catalogSongIds.slice(i, i + APPLE_ADD_BATCH);
+    const url = `${API}/v1/me/favorites?ids=${chunk.map(encodeURIComponent).join(",")}`;
+    const r = await httpRequest({ method: "POST", url, headers: authedHeaders(), ...AUTH_EXTRAS });
+    if (r.status < 200 || r.status >= 300) throw new HttpError(r.status, r.text, "apple_favorite");
+  }
 }

@@ -7,7 +7,7 @@
 // loops on a buggy server response).
 
 import { forceRefreshAccessToken, getAccessToken } from "../auth/spotify.js";
-import { httpJson, type HttpRequest } from "../util/http.js";
+import { httpJson, httpRequest, HttpError, type HttpRequest } from "../util/http.js";
 
 const API = "https://api.spotify.com";
 const MAX_PAGES = 200; // 200 * 50 = 10 000 items max per collection — enough for a personal library
@@ -207,4 +207,81 @@ export async function searchTracks(term: string, limit = SPOTIFY_SEARCH_MAX_LIMI
   const url = `${API}/v1/search?q=${encodeURIComponent(safeTerm)}&type=track&limit=${safeLimit}`;
   const r = await httpJson<SearchResponse>({ method: "GET", url, headers: await bearer(), ...AUTH_EXTRAS });
   return r.tracks?.items ?? [];
+}
+
+// ── Writes (Phase 7) ────────────────────────────────────────────────────
+//
+// Endpoints verified live 2026-06-04 (blueprint §6.6) — Spotify's Feb-2026
+// migration renamed all of these. Batch caps: add-to-playlist 100, save 40,
+// contains 40. Bodies use `uris` (spotify:track:ID), NOT `ids`.
+
+export const SPOTIFY_ADD_BATCH = 100;
+export const SPOTIFY_SAVE_BATCH = 40;
+export const SPOTIFY_CONTAINS_BATCH = 40;
+
+function trackUri(id: string): string {
+  return `spotify:track:${id}`;
+}
+
+async function writeHeaders(): Promise<Record<string, string>> {
+  return { ...(await bearer()), "Content-Type": "application/json" };
+}
+
+/** Create a new private playlist (POST /v1/me/playlists). Returns its id. */
+export async function createPlaylist(name: string, description = ""): Promise<string> {
+  const r = await httpJson<{ id: string }>({
+    method: "POST",
+    url: `${API}/v1/me/playlists`,
+    headers: await writeHeaders(),
+    body: JSON.stringify({ name, public: false, description }),
+    ...AUTH_EXTRAS,
+  });
+  return r.id;
+}
+
+/** Append track ids to a playlist (POST /v1/playlists/{id}/items). Chunks at
+ * 100. Caller passes bare track ids; we wrap them as spotify:track URIs. */
+export async function addItemsToPlaylist(playlistId: string, trackIds: string[]): Promise<void> {
+  for (let i = 0; i < trackIds.length; i += SPOTIFY_ADD_BATCH) {
+    const chunk = trackIds.slice(i, i + SPOTIFY_ADD_BATCH);
+    const r = await httpRequest({
+      method: "POST",
+      url: `${API}/v1/playlists/${encodeURIComponent(playlistId)}/items`,
+      headers: await writeHeaders(),
+      body: JSON.stringify({ uris: chunk.map(trackUri) }),
+      ...AUTH_EXTRAS,
+    });
+    if (r.status < 200 || r.status >= 300) throw new HttpError(r.status, r.text, "add_items");
+  }
+}
+
+/** Save tracks to the user's library / Liked Songs (PUT /v1/me/library).
+ * Chunks at 40. */
+export async function saveToLibrary(trackIds: string[]): Promise<void> {
+  for (let i = 0; i < trackIds.length; i += SPOTIFY_SAVE_BATCH) {
+    const chunk = trackIds.slice(i, i + SPOTIFY_SAVE_BATCH);
+    const r = await httpRequest({
+      method: "PUT",
+      url: `${API}/v1/me/library`,
+      headers: await writeHeaders(),
+      body: JSON.stringify({ uris: chunk.map(trackUri) }),
+      ...AUTH_EXTRAS,
+    });
+    if (r.status < 200 || r.status >= 300) throw new HttpError(r.status, r.text, "save_library");
+  }
+}
+
+/** Check which of `trackIds` are already saved (GET /v1/me/library/contains).
+ * Returns the set of saved ids. Chunks at 40. */
+export async function savedContains(trackIds: string[]): Promise<Set<string>> {
+  const saved = new Set<string>();
+  for (let i = 0; i < trackIds.length; i += SPOTIFY_CONTAINS_BATCH) {
+    const chunk = trackIds.slice(i, i + SPOTIFY_CONTAINS_BATCH);
+    const url = `${API}/v1/me/library/contains?uris=${chunk.map((id) => encodeURIComponent(trackUri(id))).join(",")}`;
+    const flags = await httpJson<boolean[]>({ method: "GET", url, headers: await bearer(), ...AUTH_EXTRAS });
+    chunk.forEach((id, idx) => {
+      if (flags[idx]) saved.add(id);
+    });
+  }
+  return saved;
 }

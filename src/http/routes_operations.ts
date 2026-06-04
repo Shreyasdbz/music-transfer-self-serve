@@ -9,6 +9,8 @@ import { findCatalogByName, normalizeName, type NameCandidate, type Platform } f
 import { listMyPlaylists, playlistTrackCount } from "../clients/spotify.js";
 import { listLibraryPlaylists } from "../clients/apple.js";
 import { log } from "../util/log.js";
+import { startOperation, subscribeOperation } from "../operation/runner.js";
+import { getOperation, getOperationEvents, listOperations, OperationRunningConflict } from "../ledger/operationsStore.js";
 
 type Side = "source" | "destination";
 
@@ -191,11 +193,86 @@ export function registerOperationsRoutes(): void {
       return;
     }
 
-    // Fully resolved — the transfer runner is Phase 7.
-    sendJson(res, 501, {
-      error: "not_implemented",
-      detail: "Operation runner lands in Phase 7",
-      resolved: { source: srcRes.resolved, destination: dstRes.resolved, rematch: body.rematch === true },
+    // Fully resolved → start the additive transfer (Phase 7).
+    try {
+      const handle = startOperation({
+        source,
+        destination,
+        sourceTarget: srcRes.resolved,
+        destinationTarget: dstRes.resolved,
+        rematch: body.rematch === true,
+      });
+      void handle.done.catch(() => undefined);
+      sendJson(res, 202, { id: handle.id });
+    } catch (err) {
+      if (err instanceof OperationRunningConflict) {
+        sendStatus(res, 409, "operation_already_running");
+        return;
+      }
+      log.error("operations.start_failed", { message: (err as Error).message });
+      sendStatus(res, 500, "operation_start_failed");
+    }
+  });
+
+  route("GET", "/api/operations", ({ res }) => {
+    sendJson(res, 200, { operations: listOperations() });
+  });
+
+  route("GET", "/api/operations/:id", ({ res, params }) => {
+    const op = getOperation(params["id"]!);
+    if (!op) {
+      sendStatus(res, 404, "operation_not_found");
+      return;
+    }
+    sendJson(res, 200, { operation: op, events: getOperationEvents(op.id) });
+  });
+
+  route("GET", "/api/operations/:id/events", ({ req, res, params }) => {
+    const id = params["id"]!;
+    const op = getOperation(id);
+    if (!op) {
+      sendStatus(res, 404, "operation_not_found");
+      return;
+    }
+    const lastEventId = Number(req.headers["last-event-id"] ?? 0) || 0;
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Content-Type-Options": "nosniff",
+    });
+
+    const sent = new Set<number>();
+    let closed = false;
+    const send = (seq: number, type: string, payload: unknown): void => {
+      if (closed || seq <= lastEventId || sent.has(seq)) return;
+      sent.add(seq);
+      res.write(`id: ${seq}\nevent: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
+      if (type === "done" || type === "interrupted") {
+        closed = true;
+        res.end();
+      }
+    };
+
+    const emitter = subscribeOperation(id);
+    const onEvent = (e: { seq: number; type: string; payload: unknown }): void => send(e.seq, e.type, e.payload);
+    if (emitter) emitter.on("event", onEvent);
+
+    // Replay persisted events with seq > Last-Event-ID (synchronous; no live
+    // event can interleave before this returns).
+    for (const e of getOperationEvents(id, lastEventId)) {
+      send(e.seq, e.type, e.payload ? JSON.parse(e.payload) : {});
+    }
+    // If the run already finished, close after replaying the terminal event.
+    const fresh = getOperation(id);
+    if (fresh && fresh.status !== "running" && !closed) {
+      closed = true;
+      res.end();
+    }
+
+    req.on("close", () => {
+      closed = true;
+      if (emitter) emitter.off("event", onEvent);
     });
   });
 }
