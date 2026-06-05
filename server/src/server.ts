@@ -5,10 +5,6 @@
 
 import { closeLedger, openLedger } from "./ledger/db.js";
 import { startHttpServer } from "./http/server.js";
-import { registerAuthRoutes } from "./http/routes_auth.js";
-import { registerPreflightRoutes } from "./http/routes_preflight.js";
-import { registerCatalogRoutes } from "./http/routes_catalog.js";
-import { registerOperationsRoutes } from "./http/routes_operations.js";
 import { registerBuiltInProviders } from "./providers/index.js";
 import { installAuthFailureSink } from "./preflight/gate.js";
 import { stopStateSweeper } from "./auth/spotify.js";
@@ -19,10 +15,8 @@ async function main(): Promise<void> {
   openLedger();
   registerBuiltInProviders(); // register Spotify + Apple in the provider registry
   installAuthFailureSink(); // wire util/http 401/403-scope → gate auto-invalidation
-  registerAuthRoutes();
-  registerPreflightRoutes();
-  registerCatalogRoutes();
-  registerOperationsRoutes();
+  // startHttpServer() builds the Hono app and registers every route module
+  // (auth/preflight/catalog/operations) + the §11.0 security middleware.
   const handle = await startHttpServer();
 
   const shutdown = (signal: string): void => {

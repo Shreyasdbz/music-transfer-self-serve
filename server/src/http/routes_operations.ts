@@ -3,8 +3,10 @@
 // actual transfer runner lands in Phase 7 — a fully-resolved request returns
 // 501 (the 422 disambiguation is what "succeeds" past in the Phase 6 AC).
 
-import { BodyTooLargeError, readJsonBody, route, sendJson, sendStatus } from "./server.js";
-import { gateClosed } from "./routes_preflight.js";
+import type { Hono } from "hono";
+import { err, readJson } from "./respond.js";
+import { sse } from "./sse.js";
+import { gateBlocked } from "./routes_preflight.js";
 import { findCatalogByName, normalizeName, type NameCandidate, type Platform } from "../ledger/catalogStore.js";
 import { listMyPlaylists, playlistTrackCount } from "../clients/spotify.js";
 import { listLibraryPlaylists } from "../clients/apple.js";
@@ -155,45 +157,29 @@ async function resolveTarget(platform: Platform, side: Side, t: TargetInput | un
   return { ok: false, status: 422, body: { side, error: "ambiguous_name", candidates: matches } };
 }
 
-export function registerOperationsRoutes(): void {
-  route("POST", "/api/operations", async ({ req, res }) => {
-    if (gateClosed(res)) return;
+export function registerOperationsRoutes(app: Hono): void {
+  app.post("/api/operations", async (c) => {
+    const blocked = gateBlocked(c);
+    if (blocked) return blocked;
 
     let body: OperationBody;
     try {
-      body = await readJsonBody<OperationBody>(req);
-    } catch (err) {
-      if (err instanceof BodyTooLargeError) throw err;
-      sendStatus(res, 400, "invalid_json");
-      return;
+      body = await readJson<OperationBody>(c);
+    } catch {
+      return err(c, 400, "invalid_json");
     }
 
     const { source, destination } = body;
-    if (source !== "spotify" && source !== "apple") {
-      sendStatus(res, 400, "invalid_source");
-      return;
-    }
-    if (destination !== "spotify" && destination !== "apple") {
-      sendStatus(res, 400, "invalid_destination");
-      return;
-    }
-    if (source === destination) {
-      sendStatus(res, 400, "source_equals_destination");
-      return;
-    }
+    if (source !== "spotify" && source !== "apple") return err(c, 400, "invalid_source");
+    if (destination !== "spotify" && destination !== "apple") return err(c, 400, "invalid_destination");
+    if (source === destination) return err(c, 400, "source_equals_destination");
 
     const srcRes = await resolveTarget(source, "source", body.sourceTarget);
-    if (!srcRes.ok) {
-      sendJson(res, 422, srcRes.body);
-      return;
-    }
+    if (!srcRes.ok) return c.json(srcRes.body, 422);
     const dstRes = await resolveTarget(destination, "destination", body.destinationTarget);
-    if (!dstRes.ok) {
-      sendJson(res, 422, dstRes.body);
-      return;
-    }
+    if (!dstRes.ok) return c.json(dstRes.body, 422);
 
-    // Fully resolved → start the additive transfer (Phase 7).
+    // Fully resolved → start the additive transfer.
     try {
       const handle = startOperation({
         source,
@@ -203,76 +189,52 @@ export function registerOperationsRoutes(): void {
         rematch: body.rematch === true,
       });
       void handle.done.catch(() => undefined);
-      sendJson(res, 202, { id: handle.id });
-    } catch (err) {
-      if (err instanceof OperationRunningConflict) {
-        sendStatus(res, 409, "operation_already_running");
-        return;
-      }
-      log.error("operations.start_failed", { message: (err as Error).message });
-      sendStatus(res, 500, "operation_start_failed");
+      return c.json({ id: handle.id }, 202);
+    } catch (e) {
+      if (e instanceof OperationRunningConflict) return err(c, 409, "operation_already_running");
+      log.error("operations.start_failed", { message: (e as Error).message });
+      return err(c, 500, "operation_start_failed");
     }
   });
 
-  route("GET", "/api/operations", ({ res }) => {
-    sendJson(res, 200, { operations: listOperations() });
+  app.get("/api/operations", (c) => c.json({ operations: listOperations() }));
+
+  app.get("/api/operations/:id", (c) => {
+    const op = getOperation(c.req.param("id"));
+    if (!op) return err(c, 404, "operation_not_found");
+    return c.json({ operation: op, events: getOperationEvents(op.id) });
   });
 
-  route("GET", "/api/operations/:id", ({ res, params }) => {
-    const op = getOperation(params["id"]!);
-    if (!op) {
-      sendStatus(res, 404, "operation_not_found");
-      return;
-    }
-    sendJson(res, 200, { operation: op, events: getOperationEvents(op.id) });
-  });
-
-  route("GET", "/api/operations/:id/events", ({ req, res, params }) => {
-    const id = params["id"]!;
+  app.get("/api/operations/:id/events", (c) => {
+    const id = c.req.param("id");
     const op = getOperation(id);
-    if (!op) {
-      sendStatus(res, 404, "operation_not_found");
-      return;
-    }
-    const lastEventId = Number(req.headers["last-event-id"] ?? 0) || 0;
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-      "X-Content-Type-Options": "nosniff",
-    });
+    if (!op) return err(c, 404, "operation_not_found");
 
-    const sent = new Set<number>();
-    let closed = false;
-    const send = (seq: number, type: string, payload: unknown): void => {
-      if (closed || seq <= lastEventId || sent.has(seq)) return;
-      sent.add(seq);
-      res.write(`id: ${seq}\nevent: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
-      if (type === "done" || type === "interrupted") {
-        closed = true;
-        res.end();
+    const lastEventId = Number(c.req.header("last-event-id") ?? 0) || 0;
+    return sse(c, (api) => {
+      const sent = new Set<number>();
+      const send = (seq: number, type: string, payload: unknown): void => {
+        if (seq <= lastEventId || sent.has(seq)) return;
+        sent.add(seq);
+        api.write({ id: String(seq), event: type, data: JSON.stringify(payload) });
+        if (type === "done" || type === "interrupted") api.done();
+      };
+
+      const emitter = subscribeOperation(id);
+      const onEvent = (e: { seq: number; type: string; payload: unknown }): void => send(e.seq, e.type, e.payload);
+      if (emitter) {
+        emitter.on("event", onEvent);
+        api.onClose(() => emitter.off("event", onEvent));
       }
-    };
 
-    const emitter = subscribeOperation(id);
-    const onEvent = (e: { seq: number; type: string; payload: unknown }): void => send(e.seq, e.type, e.payload);
-    if (emitter) emitter.on("event", onEvent);
-
-    // Replay persisted events with seq > Last-Event-ID (synchronous; no live
-    // event can interleave before this returns).
-    for (const e of getOperationEvents(id, lastEventId)) {
-      send(e.seq, e.type, e.payload ? JSON.parse(e.payload) : {});
-    }
-    // If the run already finished, close after replaying the terminal event.
-    const fresh = getOperation(id);
-    if (fresh && fresh.status !== "running" && !closed) {
-      closed = true;
-      res.end();
-    }
-
-    req.on("close", () => {
-      closed = true;
-      if (emitter) emitter.off("event", onEvent);
+      // Replay persisted events with seq > Last-Event-ID (synchronous; no live
+      // event can interleave before this returns).
+      for (const e of getOperationEvents(id, lastEventId)) {
+        send(e.seq, e.type, e.payload ? JSON.parse(e.payload) : {});
+      }
+      // If the run already finished, close after replaying the terminal event.
+      const fresh = getOperation(id);
+      if (fresh && fresh.status !== "running") api.done();
     });
   });
 }

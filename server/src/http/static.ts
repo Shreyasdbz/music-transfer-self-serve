@@ -1,13 +1,12 @@
-// Static file handler for web/. Injects the per-server-start CSRF token into
-// served HTML as <meta name="csrf-token" content="...">.
+// Static file handler for WEB_DIR (Hono). Injects the per-server-start CSRF
+// token into served HTML as <meta name="csrf-token" content="...">. Restricted
+// to files inside WEB_DIR via a path-prefix check (defense in depth).
 //
-// Restricted to files inside WEB_DIR via path-prefix check, even though the
-// only caller is our own router — defense in depth against accidental future
-// path concatenation bugs.
+// (V3: serves the kept vanilla UI at server/web — the regression oracle. V5/V6
+// switch WEB_DIR/serving to the built Vite app at web/dist.)
 
-import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { extname, normalize, resolve, sep } from "node:path";
-import type { IncomingMessage, ServerResponse } from "node:http";
 import { WEB_DIR } from "../config.js";
 
 const MIME: Record<string, string> = {
@@ -26,15 +25,12 @@ const MIME: Record<string, string> = {
   ".map": "application/json; charset=utf-8",
 };
 
-function resolveSafe(urlPath: string): string | undefined {
-  const clean = urlPath.split("?")[0] ?? "/";
+function resolveSafe(pathname: string): string | undefined {
   let decoded: string;
   try {
-    decoded = decodeURIComponent(clean);
+    decoded = decodeURIComponent(pathname);
   } catch {
-    // Malformed percent-encoding — treat as "no such file" so the caller
-    // returns 404 rather than letting the URIError bubble to a 500.
-    return undefined;
+    return undefined; // malformed percent-encoding → 404
   }
   const target = normalize(resolve(WEB_DIR, "." + decoded));
   if (target !== WEB_DIR && !target.startsWith(WEB_DIR + sep)) return undefined;
@@ -47,32 +43,21 @@ function resolveSafe(urlPath: string): string | undefined {
   return target;
 }
 
-export function serveStatic(
-  req: IncomingMessage,
-  res: ServerResponse,
-  csrfToken: string,
-): boolean {
-  const url = req.url ?? "/";
-  const filePath = resolveSafe(url);
-  if (!filePath) return false;
+const STATIC_HEADERS = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } as const;
+const META_TAG_RE = /<meta\s+[^>]*\bname=["']csrf-token["'][^>]*>/i;
+
+/** Serve a static file under WEB_DIR for `pathname`, injecting the CSRF token
+ * into HTML. Returns a Response, or undefined if no such file (caller → 404). */
+export function serveStaticFile(pathname: string, csrfToken: string): Response | undefined {
+  const filePath = resolveSafe(pathname);
+  if (!filePath) return undefined;
 
   const ext = extname(filePath).toLowerCase();
   const type = MIME[ext] ?? "application/octet-stream";
 
   if (ext === ".html") {
-    // Inject the CSRF token <meta> tag. We rewrite the response body in
-    // memory — these files are tiny.
-    //
-    // Detection has to look for an actual `<meta ... name="csrf-token" ...>`
-    // tag, not just any occurrence of the string `name="csrf-token"`, because
-    // the static page is allowed to contain JS that READS the tag
-    // (e.g. `document.querySelector('meta[name="csrf-token"]')`). An overly
-    // liberal check matched that JS, ran a regex replace that found nothing,
-    // and silently shipped the page with no token — which then 403'd every
-    // subsequent POST. Test fixture: musickit.html bit by exactly this.
     let body = readFileSync(filePath, "utf8");
     const metaTag = `<meta name="csrf-token" content="${csrfToken}">`;
-    const META_TAG_RE = /<meta\s+[^>]*\bname=["']csrf-token["'][^>]*>/i;
     if (META_TAG_RE.test(body)) {
       body = body.replace(META_TAG_RE, metaTag);
     } else if (body.includes("</head>")) {
@@ -80,23 +65,10 @@ export function serveStatic(
     } else {
       body = metaTag + body;
     }
-    res.writeHead(200, {
-      "Content-Type": type,
-      "Content-Length": Buffer.byteLength(body),
-      "Cache-Control": "no-store",
-      "X-Content-Type-Options": "nosniff",
-    });
-    res.end(body);
-    return true;
+    return new Response(body, { status: 200, headers: { "Content-Type": type, ...STATIC_HEADERS } });
   }
 
-  const st = statSync(filePath);
-  res.writeHead(200, {
-    "Content-Type": type,
-    "Content-Length": st.size,
-    "Cache-Control": "no-store",
-    "X-Content-Type-Options": "nosniff",
-  });
-  createReadStream(filePath).pipe(res);
-  return true;
+  // Non-HTML: return the bytes (Response sets Content-Length from the body).
+  const buf = readFileSync(filePath);
+  return new Response(new Uint8Array(buf), { status: 200, headers: { "Content-Type": type, ...STATIC_HEADERS } });
 }

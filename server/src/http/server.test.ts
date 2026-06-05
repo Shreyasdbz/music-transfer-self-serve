@@ -9,7 +9,6 @@
 
 import { connect } from "node:net";
 import { startHttpServer } from "./server.js";
-import { registerAuthRoutes } from "./routes_auth.js";
 import { stopStateSweeper } from "../auth/spotify.js";
 import { stopNonceSweeper } from "../auth/apple.js";
 
@@ -48,7 +47,8 @@ function assert(cond: unknown, msg: string): void {
   }
 }
 
-registerAuthRoutes();
+// startHttpServer() now builds the Hono app and registers every route module
+// (incl. auth — the Spotify callback exercised by the XSS test below).
 const handle = await startHttpServer();
 
 try {
