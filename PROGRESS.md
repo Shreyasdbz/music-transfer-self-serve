@@ -204,11 +204,11 @@ Keep entries factual and terse.
 
 - Start: implement `src/config.ts` (env load + validate), `src/util/log.ts` (redaction
   skeleton per §12), `src/ledger/db.ts` (§9 schema + WAL/foreign_keys/synchronous PRAGMAs
-  + forward migration runner + §12.5 startup reconciliation sweep + file-perm hardening),
-  `src/http/server.ts` (built-in `http`, bound to 127.0.0.1:8888 only; Host check on all
-  routes; Origin + X-CSRF-Token check on POSTs; per-server-start CSRF token injected as
-  `<meta name="csrf-token">`; static handler for `web/`; `GET /api/health`), and
-  `src/server.ts` entrypoint that wires them.
+  - forward migration runner + §12.5 startup reconciliation sweep + file-perm hardening),
+    `src/http/server.ts` (built-in `http`, bound to 127.0.0.1:8888 only; Host check on all
+    routes; Origin + X-CSRF-Token check on POSTs; per-server-start CSRF token injected as
+    `<meta name="csrf-token">`; static handler for `web/`; `GET /api/health`), and
+    `src/server.ts` entrypoint that wires them.
 - Decisions:
   - `config.ts` exposes both `checkEnv()` (soft predicate, used by the future preflight
     `env` check) and `loadConfig()` (throws on missing keys, used by code paths that
@@ -315,8 +315,8 @@ Keep entries factual and terse.
 - AC #1 live verification (ephemeral script, deleted after run):
   - All 6 required scopes captured and persisted in `data/tokens.json`.
   - `GET /v1/me` ✅; `GET /v1/me/playlists` returned 11 playlists (7 owned, 4 followed);
-    `GET /v1/me/tracks` returned 1623 saved tracks with 5/5 ISRCs on the sampled head;
-    `GET /v1/playlists/{id}` (via the workaround below) returned 2 tracks for "Video Hard 🎬"
+    `GET /v1/me/tracks` returned ~1,600 saved tracks with 5/5 ISRCs on the sampled head;
+    `GET /v1/playlists/{id}` (via the workaround below) returned 2 tracks for "Playlist G"
     with 2/2 ISRCs.
 - **Spotify API drift surfaced during AC #1 — recorded here, will harden in Phase 5/7.**
   Two concurrent changes Spotify rolled out that aren't in the blueprint's §6 priors:
@@ -329,12 +329,12 @@ Keep entries factual and terse.
      `items` on `/v1/playlists/{id}`, and within each playlist-track entry the inner
      field formerly `track` is now `item`. The legacy names still work on `/v1/me/tracks`
      (Saved/Liked), so for now the client extracts both shapes.
-  Workaround in `listPlaylistTracks`: fetch the parent endpoint
-  `/v1/playlists/{id}?market=from_token` and walk `items.items[].item` (with `.track`
-  fallback). Pagination uses `items.next`, which may point back at the restricted
-  `/tracks` endpoint and 403 — confirmed once a playlist exceeds 50 items, this needs a
-  Phase 7 workaround (likely re-fetching the parent with `?offset=...&fields=items(...)`).
-  Documented in `src/clients/spotify.ts` listPlaylistTracks doc comment.
+     Workaround in `listPlaylistTracks`: fetch the parent endpoint
+     `/v1/playlists/{id}?market=from_token` and walk `items.items[].item` (with `.track`
+     fallback). Pagination uses `items.next`, which may point back at the restricted
+     `/tracks` endpoint and 403 — confirmed once a playlist exceeds 50 items, this needs a
+     Phase 7 workaround (likely re-fetching the parent with `?offset=...&fields=items(...)`).
+     Documented in `src/clients/spotify.ts` listPlaylistTracks doc comment.
 - Phase 5 preflight will add a `spotify_playlist_tracks` probe that exercises this path
   on the user's own playlist and surfaces the drift to the user with a clear remediation
   pointer (Extended Quota Mode application, OR add user in App User Management).
@@ -349,22 +349,21 @@ Keep entries factual and terse.
   - field `tracks` → `items` on the playlist object (both list + detail endpoints)
   - subpath `/tracks` → `/items` on the URL
   - inner field `track` → `item` on each PlaylistTrackItem
-  The legacy `/tracks` endpoint now returns 403 (not deprecated to 404 — actively
-  rejected, presumably to push clients off the legacy URL); the new `/items` endpoint
-  takes the same `limit`/`offset`/`market`/`fields` query params and returns the same
-  Page<T> shape. There is no quota issue, no Extended Quota Mode needed, no Phase 7
-  hardening risk for normal-sized playlists.
+    The legacy `/tracks` endpoint now returns 403 (not deprecated to 404 — actively
+    rejected, presumably to push clients off the legacy URL); the new `/items` endpoint
+    takes the same `limit`/`offset`/`market`/`fields` query params and returns the same
+    Page<T> shape. There is no quota issue, no Extended Quota Mode needed, no Phase 7
+    hardening risk for normal-sized playlists.
 - `src/clients/spotify.ts` cleanup:
   - `SpotifyPlaylistSummary` now accepts `items?: {total, href}` (new) and `tracks?: {total, href}` (legacy fallback); helper `playlistTrackCount` reads either.
   - `listPlaylistTracks` now hits `/v1/playlists/{id}/items?limit=50&market=from_token`
     directly and paginates via the response's `next` URL — same simple shape as
     `listSavedTracks` and `listMyPlaylists`. Code is back to the standard pattern.
   - `extractTrack` kept to absorb the `item` vs `track` field name across surfaces.
-- Live re-verification (ephemeral script, deleted): all 7 owned playlists read end-to-end,
-  declared totals match read totals exactly, **534/534 tracks have ISRCs**. Sweat (308),
-  India Spice (123), Sangeet (49), Pithi & Haldi (25), Baraat (16), Garba (11),
-  Video Hard (2). Pagination across the 308 and 123-track playlists exercised. Liked
-  Songs still works at 1623 tracks. AC #1 is now unambiguously satisfied.
+- Live re-verification (ephemeral script, deleted): all owned playlists read end-to-end,
+  declared totals match read totals exactly, **100% of sampled tracks have ISRCs**. Playlist
+  sizes ranged from a couple of tracks to a few hundred. Pagination across the multi-hundred-track
+  playlists exercised. Liked Songs reads work at scale. AC #1 is now unambiguously satisfied.
 - README updated with a Safari/HTTPS-Only troubleshooting note under Setup.
 - No blueprint amendment needed — the renames are implementation-tier drift the client
   now handles, not a spec change. §6 (API hazards) is Apple-side; the Spotify rename
@@ -417,7 +416,7 @@ Keep entries factual and terse.
   TTL + 60s sweeper), `src/clients/apple.ts` (storefront resolution, library playlists +
   tracks, library songs, catalog search, ISRC lookup), `web/musickit.html` (popup loads
   MusicKit JS v3, configures with short-lived token, calls `authorize()`, POSTs `{nonce,
-  mut}` to `/api/auth/apple/callback`), HTTP routes `POST /api/auth/apple/start` and
+mut}` to `/api/auth/apple/callback`), HTTP routes `POST /api/auth/apple/start` and
   `POST /api/auth/apple/callback`, a Connect Apple Music UI button, AC #2 + AC #3 unit
   tests. Then PAUSE at ⏸C (Apple Developer setup) with copy-pasteable instructions;
   resume for ⏸D (UI consent) to verify AC #1 live. Apple delete-capability probe is
@@ -451,10 +450,10 @@ Keep entries factual and terse.
      `[0].data`. Was reading `[0].data[0].data`. Fixed.
 - Live AC #1 verification (ephemeral script, deleted after run):
   - **Storefront**: `us` resolved via `/v1/me/storefront`. ✅
-  - **Library playlists**: 27 playlists fetched. 4 editable (incl. "India Spice 🌶️",
-    "Sweat 🦾", "My Shazam Tracks", "GarageBand"). 23 read-only (Apple Music's
-    curated "Bollywood Chill", etc.). ✅
-  - **Library playlist tracks**: 118 tracks read from "India Spice 🌶️" via
+  - **Library playlists**: 27 playlists fetched. 4 editable (incl. "Playlist A",
+    "Playlist B", "Playlist H", "GarageBand"). 23 read-only (Apple Music's
+    curated "an Apple-curated playlist", etc.). ✅
+  - **Library playlist tracks**: 118 tracks read from "Playlist A" via
     `/v1/me/library/playlists/{id}/tracks`. ✅
   - **Library songs**: 2 entries (GarageBand demos). ✅
   - **ISRC lookup**: top chart song (Drake's "Janice STFU", ISRC USUG12604763)
@@ -473,12 +472,12 @@ Keep entries factual and terse.
   surfacing them as transfer sources. Noted.
 - Result: Phase 3 AC #1 ✅ (live), AC #2 ✅ (unit, popup JWT ES256/kid/iss +
   TTL ≤ 605s + long-lived TTL ∈ (30d, 181d]), AC #3 ✅ (unit, nonce lifecycle
-  + single-use), AC #4 ✅ (unit, sweeper). **Total suite: 45/45 PASS**.
-  Apple delete-capability probe deferred per 2026-06-03 amendment.
+  - single-use), AC #4 ✅ (unit, sweeper). **Total suite: 45/45 PASS**.
+    Apple delete-capability probe deferred per 2026-06-03 amendment.
 - Phase 3 done. Next: Phase 4 — matching engine (`identity.ts` + `scoring.ts`
-  + `matcher.ts`), ledger-backed cache. No pause points. Will land the
-  `?include=catalog` / `catalogId`-lookup hop for library-side ISRCs as part
-  of the Apple-side matcher.
+  - `matcher.ts`), ledger-backed cache. No pause points. Will land the
+    `?include=catalog` / `catalogId`-lookup hop for library-side ISRCs as part
+    of the Apple-side matcher.
 
 ### 2026-06-04 — Validation sweep: 5 personas → 25 confirmed findings → fixed
 
@@ -495,7 +494,7 @@ Keep entries factual and terse.
      POST. Fixed: `sendAutoCloseHtml` now HTML-escapes its `message` argument; the Spotify
      callback no longer echoes `errParam` at all (fixed string instead, raw error logged
      server-side); CSP `default-src 'none'; style-src 'unsafe-inline'; script-src
-     'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'` on the auto-close page;
+'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'` on the auto-close page;
      X-Frame-Options: DENY. Regression covered by new `src/http/server.test.ts`.
   2. **#24 `src/util/log.test.ts` missing.** Blueprint §12 literally mandates it. Wrote
      comprehensive coverage: every header in REDACTED_HEADER_NAMES, every body key in
@@ -508,52 +507,44 @@ Keep entries factual and terse.
   4. **#25 `mut` body key missing.** The wire JSON for `/api/auth/apple/callback` uses
      `mut`, not `musicUserToken`, so the existing redaction missed it. Added.
 
-- **Tier 2 — Token/refresh robustness.**
-  5. **#3/#10 Spotify refresh-token rotation race.** Concurrent `getAccessToken()` calls
-     would each enter `refreshAccessToken` with the same `refresh_token`; Spotify rotates
-     on use, so the losers retry with the now-invalidated token. Fixed: single in-flight
-     promise (`refreshInFlight`); `refreshAccessToken` returns the same promise to all
-     callers and clears it in `.finally`. Critical before Phase 4 (matcher fans out
-     parallel catalog reads).
-  6. **#12 storefrontCache never invalidates on Apple reconnect.** US → JP account switch
-     would keep the old storefront cached. Fixed: cache is now keyed on the MUT prefix so
-     a different MUT auto-invalidates. Avoids the circular import that explicit
-     invalidation from `auth/apple.ts` would have introduced.
-  7. **#16 apple.test.ts pollution edge case.** Snapshot/restore only restored when
-     `data/tokens.json` existed beforehand; on a fresh clone the test created the file
-     with a junk MUT and the restore hook didn't `unlinkSync` it. Fixed: restore now
-     mirrors the original presence/absence state.
-  8. **#9 / #13 Apple library reads omit `include=catalog`.** Library-track responses
-     don't expose ISRC directly; without `include=catalog` the matcher has no way to
-     round-trip back to the catalog song. Fixed: every library read now sends
-     `&include=catalog`; new `libraryIsrc()` and `libraryCatalogId()` helpers read the
-     embedded relationship with `attributes.isrc` / `playParams.catalogId` fallbacks.
-     Live verified against your "India Spice 🌶️" playlist: **98/118 ISRCs + 117/118
-     catalog IDs surface (was 0/118)**.
+- **Tier 2 — Token/refresh robustness.** 5. **#3/#10 Spotify refresh-token rotation race.** Concurrent `getAccessToken()` calls
+  would each enter `refreshAccessToken` with the same `refresh_token`; Spotify rotates
+  on use, so the losers retry with the now-invalidated token. Fixed: single in-flight
+  promise (`refreshInFlight`); `refreshAccessToken` returns the same promise to all
+  callers and clears it in `.finally`. Critical before Phase 4 (matcher fans out
+  parallel catalog reads). 6. **#12 storefrontCache never invalidates on Apple reconnect.** US → JP account switch
+  would keep the old storefront cached. Fixed: cache is now keyed on the MUT prefix so
+  a different MUT auto-invalidates. Avoids the circular import that explicit
+  invalidation from `auth/apple.ts` would have introduced. 7. **#16 apple.test.ts pollution edge case.** Snapshot/restore only restored when
+  `data/tokens.json` existed beforehand; on a fresh clone the test created the file
+  with a junk MUT and the restore hook didn't `unlinkSync` it. Fixed: restore now
+  mirrors the original presence/absence state. 8. **#9 / #13 Apple library reads omit `include=catalog`.** Library-track responses
+  don't expose ISRC directly; without `include=catalog` the matcher has no way to
+  round-trip back to the catalog song. Fixed: every library read now sends
+  `&include=catalog`; new `libraryIsrc()` and `libraryCatalogId()` helpers read the
+  embedded relationship with `attributes.isrc` / `playParams.catalogId` fallbacks.
+  Live verified against your "Playlist A" playlist: **98/118 ISRCs + 117/118
+  catalog IDs surface (was 0/118)**.
 
-- **Tier 3 — API correctness.**
-  9. **#8 `searchByIsrc` truncates results.** Per-chunk requests pushed only the first
-     page and ignored `next`. A single ISRC can match multiple catalog entries (single /
-     deluxe / regional masters / compilation appearances); the matcher would silently
-     lose disambiguation candidates. Fixed: each chunk now routes through `paginate()`
-     with `&limit=100`.
+- **Tier 3 — API correctness.** 9. **#8 `searchByIsrc` truncates results.** Per-chunk requests pushed only the first
+  page and ignored `next`. A single ISRC can match multiple catalog entries (single /
+  deluxe / regional masters / compilation appearances); the matcher would silently
+  lose disambiguation candidates. Fixed: each chunk now routes through `paginate()`
+  with `&limit=100`.
 
-- **Tier 4 — Build hygiene + Phase 1 AC tests.**
-  10. **#17 `npm run doctor` → ENOENT.** Phase 5 owns the real implementation; until
-      then a tiny `src/cli.ts` stub exits 2 with "not implemented yet (Phase 5)" so
-      anyone following README sees a clear pointer instead of a tsx module error.
-  11. **#18 `npm run lint` fails out of the box.** Dropped unused `SPOTIFY_REDIRECT_URI_EXPECTED`
-      import in spotify.ts; removed `LibraryPlaylistsResponse` and `CatalogSongsResponse`
-      types that were no longer referenced after switching to inline `paginate<T>` types.
-      `npm run lint` now exits 0.
-  12. **#19 Phase 1 AC #2 + #4 had no automated coverage.** PROGRESS claimed both were
-      verified, but only manually. Wrote `src/http/server.test.ts` (raw TCP socket to
-      exercise Host=localhost rejection that fetch can't reach; CSRF + Origin matrix;
-      XSS regression with CSP header check — 10 assertions) and `src/ledger/db.test.ts`
-      (schema version + tables + partial-unique indexes + startup-sweep marks running
-      → interrupted + appends event row + idempotency — 18 assertions). Both wired
-      into `npm test`. **Total suite: 112/112 PASS** (log 39, spotify 21, apple 24,
-      http 10, ledger 18).
+- **Tier 4 — Build hygiene + Phase 1 AC tests.** 10. **#17 `npm run doctor` → ENOENT.** Phase 5 owns the real implementation; until
+  then a tiny `src/cli.ts` stub exits 2 with "not implemented yet (Phase 5)" so
+  anyone following README sees a clear pointer instead of a tsx module error. 11. **#18 `npm run lint` fails out of the box.** Dropped unused `SPOTIFY_REDIRECT_URI_EXPECTED`
+  import in spotify.ts; removed `LibraryPlaylistsResponse` and `CatalogSongsResponse`
+  types that were no longer referenced after switching to inline `paginate<T>` types.
+  `npm run lint` now exits 0. 12. **#19 Phase 1 AC #2 + #4 had no automated coverage.** PROGRESS claimed both were
+  verified, but only manually. Wrote `src/http/server.test.ts` (raw TCP socket to
+  exercise Host=localhost rejection that fetch can't reach; CSRF + Origin matrix;
+  XSS regression with CSP header check — 10 assertions) and `src/ledger/db.test.ts`
+  (schema version + tables + partial-unique indexes + startup-sweep marks running
+  → interrupted + appends event row + idempotency — 18 assertions). Both wired
+  into `npm test`. **Total suite: 112/112 PASS** (log 39, spotify 21, apple 24,
+  http 10, ledger 18).
 
 - **Tier 5 — Defense-in-depth + lows.** Fixed every remaining low individually:
   - **#2 HttpError.bodySafe → body** (renamed), and the body + URL pass through `redact()`
@@ -632,7 +623,7 @@ Keep entries factual and terse.
     scored search → matches the same Apple catalog song with confidence 100.
     Tier-2 path exercised end-to-end.
   - **#1c Symmetric Apple → Spotify** — Apple's "Janice STFU" (ISRC USUG12604763)
-    → Spotify track id 514joG57v4yKTsfQmz7stz via Tier-1 ISRC.
+    → Spotify track id [spotify track id] via Tier-1 ISRC.
   - **#1d Ledger cache** — Repeat call returns `fromCache=true`; the persisted
     row in `tracks` has the resolved mapping.
 - Unit coverage in `src/match/match.test.ts`: **42 assertions** covering normalize /
@@ -697,7 +688,7 @@ Keep entries factual and terse.
     and clamps `limit` to 25.
   - **#6 (MEDIUM) — REJECTED after live test.** The verifier said to add
     `market=from_token` to Spotify search. Adding it returned `403 Insufficient client
-    scope` live, because `from_token` requires the `user-read-private` scope we
+scope` live, because `from_token` requires the `user-read-private` scope we
     deliberately don't request (§5.1). A user-authorized token already scopes catalog
     availability to the user without an explicit market. Reverted the market addition;
     documented why inline. (The market concern applies to app-only tokens, which we
@@ -783,8 +774,8 @@ Keep entries factual and terse.
   - HTTP: the router gained `:param` matching. `routes_preflight.ts` serves
     `/api/gate`, `/api/preflight/latest|run|:id|:id/events` (SSE with `id:`=seq +
     `Last-Event-ID` replay-from-ledger), and the gated stubs `POST /api/catalog/refresh`
-    + `POST /api/operations` (412 when closed with the gate reason; 501 when open since
-    Phase 6/7 own the bodies).
+    - `POST /api/operations` (412 when closed with the gate reason; 501 when open since
+      Phase 6/7 own the bodies).
   - `cli.ts doctor` shares the runner (surface='cli'), waits for completion, then prints
     a grouped checklist in seq order (streaming was abandoned for the CLI because the
     parallel groups interleave; the UI groups by name so it's unaffected). Exit 0 only on
@@ -940,7 +931,7 @@ Keep entries factual and terse.
     `source_playlist_not_found`. Fixed: `resolveTarget` is now async and unions
     `findCatalogByName` with a live `listMyPlaylists`/`listLibraryPlaylists` name search
     (deduped by id, cache wins; degrades to cache-only on a live error). **Live-verified
-    with the catalog cache CLEARED: "Baraat 🐎" still resolved to the real Spotify
+    with the catalog cache CLEARED: "Playlist E" still resolved to the real Spotify
     playlist via the live library — not duplicated.**
   - **#3 a name that looks like an id bypassed disambiguation (low).** A 22-char string or
     a "p."/"pl." name was parsed as an id, skipping §9. Restructured: a URL is an
@@ -1006,7 +997,7 @@ Keep entries factual and terse.
   correctly skip prior writes — fixed by giving each test a distinct destination name (the
   union working as designed, not a bug).
 - **Supervised LIVE test (real accounts, throwaway playlist):**
-  - Spotify "Video Hard 🎬" (2 tracks) → NEW Apple playlist "MTSS Test" (`p.oOzA2DgF83o8oZ`).
+  - Spotify "Playlist G" (2 tracks) → NEW Apple playlist "MTSS Test" (`[apple playlist id]`).
     Both tracks matched via ISRC (Victory Lap, Midnight City, confidence 100, tier=isrc)
     and written. status=succeeded, summary {read:2, matched:2, written:2, unmatched:0,
     failed:0}. **Verified the renamed/new endpoints work end-to-end:** create-library-
@@ -1115,7 +1106,7 @@ confirmed**, collapsing to **4 root causes**. No invariant findings (additive-on
 discipline held; the sweep confirmed the redaction claim end-to-end). Fixes (all `web/app.js`):
 
 - **A — mid-run 401/403 hint named the wrong platform** (findings #1 high, #3/#4/#5 med, #9 low).
-  The error handler read `selectedDestination()` *live*, so flipping the destination radio
+  The error handler read `selectedDestination()` _live_, so flipping the destination radio
   mid-run made the reconnect hint name the wrong platform. Fix: `watchOperation(id, destination)`
   now captures `opDestination` at start (passed from `submitOperation`'s payload) and uses it in
   the hint. Defence in depth: `setFormDisabled(true)` locks the source/destination radios +
@@ -1153,7 +1144,7 @@ deps added; no `src/` logic changed (UI-only).
 - **Final secrets audit (repo-wide, tracked files).**
   - No `.env`, `.p8`, `secrets/`, `data/`, `tokens.json`, or `*.sqlite*` tracked. ✓
   - No real `BEGIN PRIVATE KEY` block in any tracked file — the only matches are (a) docs
-    *about* the audit (CLAUDE.md/blueprint.md/PROGRESS.md) and (b) `src/util/log.test.ts`'s
+    _about_ the audit (CLAUDE.md/blueprint.md/PROGRESS.md) and (b) `src/util/log.test.ts`'s
     obvious fake fixture (`FAKEKEYBYTESforTESTfixtureONLY`). ✓
   - No real `APPLE_TEAM_ID` / `APPLE_KEY_ID` values in tracked files (`.env.example` ships
     blanks + the placeholder `AuthKey_XXXXXXXXXX.p8`). ✓
@@ -1172,11 +1163,11 @@ the `opDestination` capture) were themselves new, unreviewed code. 5 personas (E
 lifecycle, form-lock lifecycle, cross-operation state-bleed, security/redaction,
 spec/invariants); each finding adversarially refuted. **6 raw → 2 confirmed** (the fix code
 otherwise held: no lifecycle/state-bleed/redaction defects). Both confirmed were about the
-reconnect-hint *wording*; one fix covered both, plus a sibling pre-existing case:
+reconnect-hint _wording_; one fix covered both, plus a sibling pre-existing case:
 
 - **Truthfulness (high):** the mid-run 401/403 hint said "already-written tracks will skip on
   re-run" unconditionally, but the §12.5 resume-union is deliberately NOT applied to a `create`
-  destination (runner.ts:100-109) — a re-run there makes a *new* playlist and re-writes
+  destination (runner.ts:100-109) — a re-run there makes a _new_ playlist and re-writes
   everything, so the skip claim was false. Fix: `submitOperation` now computes `resumeSafe`
   (`liked`/`favorites`/existing-playlist-with-id ⇒ true; a free-text name that may resolve to a
   new `create` ⇒ false) and passes it to `watchOperation`; the hint only promises skip when
@@ -1193,8 +1184,8 @@ Re-verified: `node --check` clean, `tsc --noEmit` clean, **288 PASS / 0 FAIL**. 
 
 ### 2026-06-04 — Live-test hotfix: Apple empty-playlist 404 on `/tracks`
 
-First human-supervised **Spotify → Apple** live run (308-track "Sweat" → existing empty Apple
-"Sweat" playlist) aborted at destination-read: Apple returns **HTTP 404 / code 40403 /
+First human-supervised **Spotify → Apple** live run (308-track "Playlist B" → existing empty Apple
+"Playlist B" playlist) aborted at destination-read: Apple returns **HTTP 404 / code 40403 /
 "No related resources"** on the `/tracks` relationship of a ZERO-track playlist instead of an
 empty list. The 404 propagated through `readDestination` → runner top-level catch → SSE
 `error` → the new disconnect UI ("disconnected — partial: read 308 · matched 0 …"). The
@@ -1236,7 +1227,7 @@ A2 multi-user-ready seam, A3 session cookie) gate the build.
     `scripts/`, `tsconfig.json`, `.eslintrc.cjs`, `.env.example` under `server/` via `git mv`
     (history preserved; 53 renames). Gitignored runtime dirs (`data/`, `secrets/`, `.env`) moved
     locally too so `server/` is self-contained — `config.ts`'s `ROOT = resolve(import.meta.dirname,
-    "..")` now resolves to `server/`, so `DATA_DIR`/`SECRETS_DIR`/`WEB_DIR` stay consistent with
+"..")` now resolves to `server/`, so `DATA_DIR`/`SECRETS_DIR`/`WEB_DIR` stay consistent with
     **zero code change**. `dotenv` reads `server/.env` (npm runs workspace scripts with cwd=server).
   - **New dev deps** (justified, in `@mtss/web`): `vite`, `vite-plugin-solid` (the chosen build
     tool/plugin); `solid-js` (chosen client runtime); `typescript` (web tsconfig). `@mtss/design-tokens`
@@ -1307,7 +1298,7 @@ A2 multi-user-ready seam, A3 session cookie) gate the build.
   data-loss safety. Verdict: **migration is zero-data-loss + safe on the real ledger; cache is
   parity-preserving**. 8 findings, all verified (no false positives). The **one HIGH** was in the
   test harness, not the migration: `db.test.ts`'s migration phase recreated the real `LEDGER_PATH`
-  with a foreign synthetic DB — a kill mid-window could corrupt the user's real 1610-track ledger
+  with a foreign synthetic DB — a kill mid-window could corrupt the user's real ~1,600-track ledger
   via a stale WAL. **Fixed**: added `__openLedgerAt(path)` / `__setLedgerInstance` seams; the
   migration test now runs entirely on a throwaway temp ledger (never touches the real one), and
   `cleanup()` deletes WAL/SHM sidecars before restore. Resolved all 7 remaining (medium/low)
@@ -1316,7 +1307,7 @@ A2 multi-user-ready seam, A3 session cookie) gate the build.
   persist round-trip, and a stale comment.
 - **Result**: **AC met.** Migration verified zero-data-loss on a synthetic real-shaped v1 ledger
   (counts unchanged, correct backfill, `user_id` defaulting, no-op on re-open). Real ledger
-  confirmed intact post-test (schema_version=1, 1610 tracks, integrity ok) — the real migration runs
+  confirmed intact post-test (schema_version=1, ~1,600 tracks, integrity ok) — the real migration runs
   when the server is next started. `tsc` + eslint clean, **373 PASS / 0 FAIL**. §15 amendment added
   (schema extended, forward-only, zero-loss). **Next**: Phase V3 — Hono server migration.
 
@@ -1340,7 +1331,7 @@ A2 multi-user-ready seam, A3 session cookie) gate the build.
 - **Verification (unit + live)**: `tsc` + eslint clean. **Live smoke test** against the running Hono
   server: every endpoint returned the v1 status/shape; SSE framing + Last-Event-ID replay confirmed
   (full 56 frames → terminal; `Last-Event-ID:3` → only seq>3); static + CSRF injection; 403/404
-  shapes. This also live-migrated the real 1610-track ledger to v2 (confirming V2's migration on real
+  shapes. This also live-migrated the real ~1,600-track ledger to v2 (confirming V2's migration on real
   data).
 - **Validation**: 5-persona adversarial workflow + synthesis (`wf_5a86d4c0-379`). Verdict:
   behavior-preserving + secure, NO blockers, route/SSE parity + §11.0 security confirmed. 5 findings.
@@ -1352,7 +1343,7 @@ A2 multi-user-ready seam, A3 session cookie) gate the build.
   real ledger (snapshot/restore) and asserts JSON headers (no-store/nosniff/charset), route shapes
   (auth-status/gate/catalog/operations/404), 413 on oversized POST, and the catalog-SSE idle frame.
 - **Result**: **AC met.** `tsc` + eslint clean, **386 PASS / 0 FAIL** (373 + 13 new). Real ledger
-  verified clean post-suite (schema_version=2, 1610 tracks, 3220 backfilled provider refs, integrity
+  verified clean post-suite (schema_version=2, ~1,600 tracks, ~3,200 backfilled provider refs, integrity
   ok, **zero test pollution**). **Next**: Phase V4 — design system (Figma tokens + Solid primitives +
   theming + a11y).
 
@@ -1382,7 +1373,7 @@ A2 multi-user-ready seam, A3 session cookie) gate the build.
 - **Validation**: 5-persona adversarial workflow + synthesis (`wf_cfb7f849-d54`). It caught a **BLOCKER
   my screenshot missed**: `kebab()` used `/[A-Z0-9]+/`, which grouped the digit with the next capital
   (`btn1Bg` → `--color-btn-1bg`) so all 8 button CSS vars were disjoint from what `components.css`
-  consumes — the Button system rendered **unstyled** (transparent), which superficially *looked* like a
+  consumes — the Button system rendered **unstyled** (transparent), which superficially _looked_ like a
   button. **Fixed** (`/[A-Z]+/`), regenerated `tokens.css`, and added `css.test.ts` (no-drift + every
   `--color-*` referenced by components is defined — the guard that was missing). Also fixed: HIGH —
   PermissionRow conveyed state by color alone → added visible "Connected/Not connected/Error" text
@@ -1417,11 +1408,11 @@ A2 multi-user-ready seam, A3 session cookie) gate the build.
     self-contained with the CSRF fallback). No vanilla DOM left.
 - **Verification (live)**: ran the Hono server + Vite + Playwright against the user's real data: the
   home renders auth (both Connected), the open gate banner, **40 real playlists** with Transfer, 4
-  history rows with status pills; clicking a playlist's Transfer pre-filled the source (Baraat 🐎),
+  history rows with status pills; clicking a playlist's Transfer pre-filled the source (Playlist E),
   auto-excluded the destination, and selecting a destination **enabled Start**. Did NOT click Start
   (it would write to the user's real Apple Music — theirs to run; the transfer+SSE engine is already
   proven by Phase 7 + the V3 live-SSE smoke test). No console errors. Ledger backed up + restored
-  intact (v2, 1610 tracks, integrity ok).
+  intact (v2, ~1,600 tracks, integrity ok).
 - **Validation**: 5-persona adversarial workflow + synthesis (`wf_76c785e9-788`; a first run failed on
   workflow plumbing — agents didn't emit structured output — and was re-run). Verdict: core flow,
   API/SSE contract, and additive-only/security all clean. Findings **resolved**: HIGH — the

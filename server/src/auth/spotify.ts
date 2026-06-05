@@ -15,11 +15,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { loadSpotifyConfig } from "../config.js";
 import { httpJson } from "../util/http.js";
 import { log } from "../util/log.js";
-import {
-  readTokens,
-  updateSpotifyTokens,
-  type SpotifyTokens,
-} from "./tokens.js";
+import { readTokens, updateSpotifyTokens, type SpotifyTokens } from "./tokens.js";
 
 export const REQUIRED_SPOTIFY_SCOPES = [
   "playlist-read-private",
@@ -194,7 +190,9 @@ async function doRefresh(current: SpotifyTokens): Promise<SpotifyTokens> {
     refresh_token: current.refresh_token,
     client_id: cfg.spotifyClientId,
   });
-  const tok = await httpJson<Partial<TokenResponse> & Pick<TokenResponse, "access_token" | "expires_in">>({
+  const tok = await httpJson<
+    Partial<TokenResponse> & Pick<TokenResponse, "access_token" | "expires_in">
+  >({
     method: "POST",
     url: "https://accounts.spotify.com/api/token",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },

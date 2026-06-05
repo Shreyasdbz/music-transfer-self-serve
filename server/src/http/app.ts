@@ -56,13 +56,17 @@ export function buildApp(csrfToken: string): Hono {
     if (c.req.method === "POST") {
       const origin = c.req.header("origin");
       if (!origin || !ALLOWED_ORIGINS.includes(origin)) return err(c, 403, "origin_invalid");
-      if (!csrfOk(c.req.header("x-csrf-token"), csrfToken)) return err(c, 403, "csrf_token_invalid");
+      if (!csrfOk(c.req.header("x-csrf-token"), csrfToken))
+        return err(c, 403, "csrf_token_invalid");
     }
     await next();
   });
 
   // 2) Body size cap → 413 (replaces the v1 BodyTooLargeError path).
-  app.use("*", bodyLimit({ maxSize: BODY_BYTE_LIMIT, onError: (c) => err(c, 413, "body_too_large") }));
+  app.use(
+    "*",
+    bodyLimit({ maxSize: BODY_BYTE_LIMIT, onError: (c) => err(c, 413, "body_too_large") }),
+  );
 
   // 2.5) Access seam (§15 A3): gate /api/* on a valid session when
   // INSTANCE_ACCESS_TOKEN is set; a no-op for a local single-owner instance.

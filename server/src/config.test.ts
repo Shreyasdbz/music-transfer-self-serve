@@ -23,7 +23,10 @@ const cfg = await import("./config.js");
 
 assert(cfg.HTTP_HOST === "127.0.0.1", `HTTP_HOST defaults to 127.0.0.1 (got ${cfg.HTTP_HOST})`);
 assert(cfg.HTTP_PORT === 9999, `PORT parsed (got ${cfg.HTTP_PORT})`);
-assert(cfg.PUBLIC_ORIGIN === "https://music.example.com", `PUBLIC_ORIGIN trailing slash stripped (got ${cfg.PUBLIC_ORIGIN})`);
+assert(
+  cfg.PUBLIC_ORIGIN === "https://music.example.com",
+  `PUBLIC_ORIGIN trailing slash stripped (got ${cfg.PUBLIC_ORIGIN})`,
+);
 assert(
   cfg.SPOTIFY_REDIRECT_URI_EXPECTED === "https://music.example.com/auth/spotify/callback",
   `redirect URI derived from PUBLIC_ORIGIN (got ${cfg.SPOTIFY_REDIRECT_URI_EXPECTED})`,

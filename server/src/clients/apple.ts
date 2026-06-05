@@ -51,7 +51,10 @@ const AUTH_EXTRAS: Pick<HttpRequest, "onUnauthorized" | "reportAuthFailure"> = {
 // ── Storefront ────────────────────────────────────────────────────────────
 
 interface StorefrontResponse {
-  data: { id: string; attributes?: { defaultLanguageTag?: string; supportedLanguageTags?: string[] } }[];
+  data: {
+    id: string;
+    attributes?: { defaultLanguageTag?: string; supportedLanguageTags?: string[] };
+  }[];
 }
 
 // Cache keyed on the current MUT (first 16 chars — enough to discriminate
@@ -81,7 +84,7 @@ export async function getStorefront(): Promise<string> {
     method: "GET",
     url: `${API}/v1/me/storefront`,
     headers: authedHeaders(),
-      ...AUTH_EXTRAS,
+    ...AUTH_EXTRAS,
   });
   const id = r.data[0]?.id;
   if (!id) throw new Error("apple_storefront_unresolved");
@@ -138,7 +141,7 @@ export async function headLibraryPlaylists(limit = 1): Promise<number> {
     method: "GET",
     url: `${API}/v1/me/library/playlists?limit=${limit}`,
     headers: authedHeaders(),
-      ...AUTH_EXTRAS,
+    ...AUTH_EXTRAS,
   });
   return r.data.length;
 }
@@ -162,7 +165,11 @@ export interface AppleLibrarySong {
   // for matching; library wrappers do not expose `isrc` directly.
   readonly relationships?: {
     catalog?: {
-      data: { id: string; type: "songs"; attributes?: { isrc?: string; name?: string; artistName?: string } }[];
+      data: {
+        id: string;
+        type: "songs";
+        attributes?: { isrc?: string; name?: string; artistName?: string };
+      }[];
     };
   };
 }
@@ -280,7 +287,10 @@ const APPLE_SEARCH_MAX_LIMIT = 25;
  * the matcher scores and picks. Apple's `term=` is a free-text field (no
  * Spotify-style operator syntax), but we still strip control characters and
  * quotes for defense in depth, and clamp `limit` to Apple's max of 25. */
-export async function searchCatalog(query: string, limit = APPLE_SEARCH_MAX_LIMIT): Promise<AppleCatalogSong[]> {
+export async function searchCatalog(
+  query: string,
+  limit = APPLE_SEARCH_MAX_LIMIT,
+): Promise<AppleCatalogSong[]> {
   // Strip double-quotes only; keep dashes/punctuation legitimately in titles (e.g. "Spider-Man").
   const safeTerm = query.replace(/["]/g, " ").replace(/\s+/g, " ").trim();
   if (safeTerm.length === 0) return [];
@@ -291,7 +301,7 @@ export async function searchCatalog(query: string, limit = APPLE_SEARCH_MAX_LIMI
     method: "GET",
     url,
     headers: devTokenHeaders(),
-      ...AUTH_EXTRAS,
+    ...AUTH_EXTRAS,
   });
   return r.results?.songs?.data ?? [];
 }
@@ -325,7 +335,7 @@ export async function getTopChartSongs(limit = 1): Promise<AppleCatalogSong[]> {
     method: "GET",
     url,
     headers: devTokenHeaders(),
-      ...AUTH_EXTRAS,
+    ...AUTH_EXTRAS,
   });
   return r.results?.songs?.[0]?.data ?? [];
 }
@@ -361,7 +371,10 @@ export async function createLibraryPlaylist(name: string, description = ""): Pro
 
 /** Append catalog songs to a library playlist (append-only). Sequential
  * batches (no concurrent adds) per §6.1. */
-export async function addTracksToLibraryPlaylist(playlistId: string, catalogSongIds: string[]): Promise<void> {
+export async function addTracksToLibraryPlaylist(
+  playlistId: string,
+  catalogSongIds: string[],
+): Promise<void> {
   for (let i = 0; i < catalogSongIds.length; i += APPLE_ADD_BATCH) {
     const chunk = catalogSongIds.slice(i, i + APPLE_ADD_BATCH);
     const r = await httpRequest({
@@ -371,7 +384,8 @@ export async function addTracksToLibraryPlaylist(playlistId: string, catalogSong
       body: JSON.stringify({ data: chunk.map((id) => ({ id, type: "songs" })) }),
       ...AUTH_EXTRAS,
     });
-    if (r.status < 200 || r.status >= 300) throw new HttpError(r.status, r.text, "apple_add_tracks");
+    if (r.status < 200 || r.status >= 300)
+      throw new HttpError(r.status, r.text, "apple_add_tracks");
   }
 }
 

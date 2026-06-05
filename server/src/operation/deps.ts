@@ -43,7 +43,10 @@ async function readSource(source: Platform, target: ResolvedTarget): Promise<Can
   return getProvider(source).readSourceTracks(OWNER, target);
 }
 
-async function readDestination(destination: Platform, target: ResolvedTarget): Promise<DestTrack[]> {
+async function readDestination(
+  destination: Platform,
+  target: ResolvedTarget,
+): Promise<DestTrack[]> {
   return getProvider(destination).readDestinationTracks(OWNER, target);
 }
 
@@ -51,7 +54,11 @@ async function createDestination(destination: Platform, name: string): Promise<s
   return getProvider(destination).createPlaylistNamed(OWNER, name);
 }
 
-async function match(source: CanonicalTrack, useCache: boolean, destination: Platform): Promise<MatchResult> {
+async function match(
+  source: CanonicalTrack,
+  useCache: boolean,
+  destination: Platform,
+): Promise<MatchResult> {
   return matchToDestination(source, getProvider(destination), { useCache });
 }
 

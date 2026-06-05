@@ -7,7 +7,13 @@
 
 import { openLedger } from "./db.js";
 
-export type PreflightStatus = "running" | "passed" | "failed" | "partial" | "interrupted" | "invalidated";
+export type PreflightStatus =
+  | "running"
+  | "passed"
+  | "failed"
+  | "partial"
+  | "interrupted"
+  | "invalidated";
 export type PreflightTrigger = "manual" | "cli" | "auto-401" | "auto-403-scope";
 export type PreflightSurface = "ui" | "cli";
 export type CheckStatus = "pass" | "fail" | "skip";
@@ -65,7 +71,10 @@ export function insertPreflightRun(row: {
   } catch (err) {
     // The partial unique index fires SQLITE_CONSTRAINT_UNIQUE when a second
     // 'running' row is inserted.
-    if ((err as { code?: string }).code?.startsWith("SQLITE_CONSTRAINT") && row.status === "running") {
+    if (
+      (err as { code?: string }).code?.startsWith("SQLITE_CONSTRAINT") &&
+      row.status === "running"
+    ) {
       throw new PreflightRunningConflict();
     }
     throw err;
@@ -105,7 +114,9 @@ function checksFor(runId: string): PreflightCheckRow[] {
 
 export function getPreflightRun(id: string): PreflightRunWithChecks | undefined {
   const row = openLedger()
-    .prepare(`SELECT id, started_at, finished_at, status, trigger, surface FROM preflight_runs WHERE id = ?`)
+    .prepare(
+      `SELECT id, started_at, finished_at, status, trigger, surface FROM preflight_runs WHERE id = ?`,
+    )
     .get(id) as PreflightRunRow | undefined;
   if (!row) return undefined;
   return { ...row, checks: checksFor(id) };

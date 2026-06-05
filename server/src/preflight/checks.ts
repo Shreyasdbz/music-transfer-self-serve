@@ -76,19 +76,28 @@ const FAILURE_EXTRA_KEYS = ["error_class", "error_message_safe"] as const;
  * Failure rows may additionally carry error_class / error_message_safe.
  * Throws if an unexpected key is present — a developer error, caught in tests
  * rather than silently leaking an unredacted field. */
-export function validateDetail(name: CheckName, status: "pass" | "fail" | "skip", detail: Record<string, unknown>): void {
+export function validateDetail(
+  name: CheckName,
+  status: "pass" | "fail" | "skip",
+  detail: Record<string, unknown>,
+): void {
   const allowed = new Set<string>(DETAIL_ALLOWLIST[name]);
   if (status === "fail") for (const k of FAILURE_EXTRA_KEYS) allowed.add(k);
   if (status === "skip") allowed.add("reason");
   for (const k of Object.keys(detail)) {
     if (!allowed.has(k)) {
-      throw new Error(`detail for "${name}" (${status}) has disallowed key "${k}" (§12 allow-list)`);
+      throw new Error(
+        `detail for "${name}" (${status}) has disallowed key "${k}" (§12 allow-list)`,
+      );
     }
   }
 }
 
 /** Build a redaction-safe failure detail from a thrown error. */
-export function failureDetail(err: unknown, extra: Record<string, unknown> = {}): Record<string, unknown> {
+export function failureDetail(
+  err: unknown,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
   const e = err as { name?: string; message?: string; status?: number };
   const cls = e.name || (e.status ? `http_${e.status}` : "Error");
   const msgRaw = e.message ?? String(err);
@@ -115,17 +124,29 @@ async function checkEnvFn(): Promise<CheckResult> {
 async function checkSpotifyToken(): Promise<CheckResult> {
   const cur = readTokens().spotify;
   if (!cur) {
-    return { status: "fail", detail: failureDetail(new Error("spotify_not_connected — click Connect Spotify")) };
+    return {
+      status: "fail",
+      detail: failureDetail(new Error("spotify_not_connected — click Connect Spotify")),
+    };
   }
   const now = Date.now();
   if (now < cur.expires_at - REFRESH_LEEWAY_MS) {
-    return { status: "pass", detail: { source: "fresh", expires_in_seconds: Math.round((cur.expires_at - now) / 1000) } };
+    return {
+      status: "pass",
+      detail: { source: "fresh", expires_in_seconds: Math.round((cur.expires_at - now) / 1000) },
+    };
   }
   // Expired/near-expiry → force a refresh and report the refreshed path.
   await getAccessToken();
   const next = readTokens().spotify;
   if (!next) return { status: "fail", detail: failureDetail(new Error("refresh lost tokens")) };
-  return { status: "pass", detail: { source: "refreshed", expires_in_seconds: Math.round((next.expires_at - Date.now()) / 1000) } };
+  return {
+    status: "pass",
+    detail: {
+      source: "refreshed",
+      expires_in_seconds: Math.round((next.expires_at - Date.now()) / 1000),
+    },
+  };
 }
 
 async function checkSpotifyScopes(): Promise<CheckResult> {
@@ -190,7 +211,10 @@ async function checkAppleDevToken(): Promise<CheckResult> {
     const days = Math.floor((exp * 1000 - Date.now()) / (24 * 60 * 60 * 1000));
     return { status: "pass", detail: { alg: "ES256", exp_days_remaining: days, signed: true } };
   } catch (err) {
-    return { status: "fail", detail: failureDetail(err, { alg: "ES256", exp_days_remaining: 0, signed: false }) };
+    return {
+      status: "fail",
+      detail: failureDetail(err, { alg: "ES256", exp_days_remaining: 0, signed: false }),
+    };
   }
 }
 
@@ -235,7 +259,10 @@ async function checkAppleIsrcLookup(): Promise<CheckResult> {
     const chart = await getTopChartSongs(1);
     const fixture = chart[0]?.attributes.isrc;
     if (!fixture) {
-      return { status: "skip", detail: { reason: "storefront top chart returned no song with an ISRC" } };
+      return {
+        status: "skip",
+        detail: { reason: "storefront top chart returned no song with an ISRC" },
+      };
     }
     const found = await searchByIsrc([fixture]);
     const validated = found.map(appleCatalogToCanonical).filter(isValidatedCandidate).length;

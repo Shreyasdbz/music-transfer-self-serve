@@ -17,7 +17,14 @@ function targetOf(row: CatalogRow): TargetInput {
 }
 
 function rowLabel(row: CatalogRow): string {
-  return row.name ?? (row.kind === "liked" ? "Liked songs" : row.kind === "favorites" ? "Favorite songs" : row.external_id);
+  return (
+    row.name ??
+    (row.kind === "liked"
+      ? "Liked songs"
+      : row.kind === "favorites"
+        ? "Favorite songs"
+        : row.external_id)
+  );
 }
 
 export function Catalog(): JSX.Element {
@@ -37,10 +44,15 @@ export function Catalog(): JSX.Element {
       <h2 id="catalog-h" class="section-title t-subheading">
         Catalog
       </h2>
-      <p class="section-sub t-caption">Your library across services. Refresh to pull the latest playlists.</p>
+      <p class="section-sub t-caption">
+        Your library across services. Refresh to pull the latest playlists.
+      </p>
 
       <Show when={catalogRefresh.running}>
-        <p class="t-subtle" style={{ color: "var(--color-text-muted)", margin: "0 0 var(--space-sm)" }}>
+        <p
+          class="t-subtle"
+          style={{ color: "var(--color-text-muted)", margin: "0 0 var(--space-sm)" }}
+        >
           Refreshing… {catalogRefresh.message}
         </p>
       </Show>
@@ -51,7 +63,11 @@ export function Catalog(): JSX.Element {
             <Collapsible
               defaultOpen
               title={
-                <span class="spread" style={{ width: "100%" }} classList={{ "provider-coming-soon": p.available === false }}>
+                <span
+                  class="spread"
+                  style={{ width: "100%" }}
+                  classList={{ "provider-coming-soon": p.available === false }}
+                >
                   <AppIcon color={brandColor(p.id)} src={brandLogo(p.id)} label={p.displayName} />
                   <span class="grow">{p.displayName}</span>
                   <Show
@@ -85,31 +101,41 @@ export function Catalog(): JSX.Element {
                   </p>
                 }
               >
-              <Show
-                when={rowsFor(p.id).length > 0}
-                fallback={<p class="t-subtle" style={{ color: "var(--color-text-muted)" }}>No catalog yet — Refresh to load.</p>}
-              >
-                <div>
-                  <For each={rowsFor(p.id)}>
-                    {(row) => (
-                      <div class="playlist-row">
-                        <span class="grow t-note">{rowLabel(row)}</span>
-                        <Show when={row.track_count != null}>
-                          <span class="t-subtle" style={{ color: "var(--color-text-muted)" }}>
-                            {row.track_count} tracks
-                          </span>
-                        </Show>
-                        <Button
-                          size="sm"
-                          onClick={() => transferFrom(p.id, targetOf(row), `${p.displayName}: ${rowLabel(row)}`)}
-                        >
-                          Transfer
-                        </Button>
-                      </div>
-                    )}
-                  </For>
-                </div>
-              </Show>
+                <Show
+                  when={rowsFor(p.id).length > 0}
+                  fallback={
+                    <p class="t-subtle" style={{ color: "var(--color-text-muted)" }}>
+                      No catalog yet — Refresh to load.
+                    </p>
+                  }
+                >
+                  <div>
+                    <For each={rowsFor(p.id)}>
+                      {(row) => (
+                        <div class="playlist-row">
+                          <span class="grow t-note">{rowLabel(row)}</span>
+                          <Show when={row.track_count != null}>
+                            <span class="t-subtle" style={{ color: "var(--color-text-muted)" }}>
+                              {row.track_count} tracks
+                            </span>
+                          </Show>
+                          <Button
+                            size="sm"
+                            onClick={() =>
+                              transferFrom(
+                                p.id,
+                                targetOf(row),
+                                `${p.displayName}: ${rowLabel(row)}`,
+                              )
+                            }
+                          >
+                            Transfer
+                          </Button>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
               </Show>
             </Collapsible>
           )}

@@ -1,11 +1,13 @@
 <!-- @format -->
 
-# v2 Build Plan — `music-transfer-self-serve`
+# v2 Build Plan — `music-transfer-self-serve` (ARCHIVED)
 
-> **Status:** validated 2026-06-05; ready to build. Tracking doc for the v2 effort.
-> Companion to `blueprint.md` (what/why + invariants), `CLAUDE.md` (how to work), and
-> `PROGRESS.md` (dated build log). This file is the **task breakdown**; check items off as
-> they land, mirror each phase start/end into `PROGRESS.md`.
+> **Status: ARCHIVED — historical planning artifact.** Phases **V0–V6 shipped** (YouTube Music is a
+> deferred placeholder; see below). The unchecked boxes below are the _original_ plan as written
+> before the build, kept for provenance — they do **not** reflect remaining work. The authoritative
+> living docs are **`blueprint.md`** (architecture + §15 amendment log) and **`PROGRESS.md`** (dated
+> build log, including the v2 phase entries and the full-audit cleanup). Don't treat this file as a
+> live checklist.
 
 ---
 
@@ -19,7 +21,7 @@ against the Figma mockups, and web research against official API docs.
 The "keep the proven engine, refactor the surface" bet holds. Verified against real code:
 
 - `operation/deps.ts` — `OperationDeps` (`src/operation/deps.ts:40-52`) is a clean,
-  platform-**opaque** seam; the 5 `=== "spotify"` branches live only in the *implementations*.
+  platform-**opaque** seam; the 5 `=== "spotify"` branches live only in the _implementations_.
   Rewriting onto a registry needs **no signature change** → `runner.ts` untouched.
 - `operation/runner.ts` — the **only** platform coupling is `writeChunkSize` (~line 204). Moves
   into `capabilities.writeBatchAdd/Like`.
@@ -41,10 +43,10 @@ dev-proxy → Hono, prod-static pattern is standard. (Gotchas: `serveStatic` roo
 ### External APIs — THREE findings that change the plan (handle honestly per the truthfulness invariant)
 
 1. **YouTube "Liked videos" is largely unavailable via the official Data API v3.**
-   - *Reading* liked videos: the LL/"Liked videos" playlist was made private at the data layer
+   - _Reading_ liked videos: the LL/"Liked videos" playlist was made private at the data layer
      (~2024); `playlistItems.list` returns empty for the owner. The `favorites` relatedPlaylist is
      deprecated. ⇒ **YouTube-as-source-of-likes is not viable.**
-   - *Writing* a like: use **`videos.rate(rating=like)`** (50 units, scope `youtube.force-ssl`),
+   - _Writing_ a like: use **`videos.rate(rating=like)`** (50 units, scope `youtube.force-ssl`),
      **NOT `playlistItems.insert`**. The original V7 spec was wrong. Idempotency for likes must come
      from **our ledger** (we can't read LL back to dedupe).
    - Regular user playlists (`playlistItems.list/insert`) work normally — that path is fine.
@@ -84,15 +86,15 @@ v2 takes it "to the next level" with three big changes:
 
 ### Locked decisions
 
-| Area | Choice |
-| --- | --- |
-| Server framework | **Hono** + `@hono/node-server` |
-| Client | **Vite** + **Solid** (TypeScript strict) |
-| Hosting model | Open-source, **BYO-secrets**, **network-deployable** (not loopback-only). Owner self-hosts; we make it *doable* (Docker + env + docs), we don't run the deploy. |
-| Multi-user | **Single-owner now, multi-user-READY** — explicit singleton `__owner__` user dimension in data model + security. No signup/login system yet. |
-| Database | **Keep SQLite** (`better-sqlite3`), persistent disk. |
-| YouTube | **Deferred to final phase.** Official **YouTube Data API v3** (OAuth). No ISRC → title/artist Tier-2 only. **Likes via `videos.rate`, not playlist insert; liked set not readable; quota-bound (~100 matches/day).** See §0. |
-| Client reactivity | **Solid** signals (revisitable for Preact at V4). |
+| Area              | Choice                                                                                                                                                                                                                       |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Server framework  | **Hono** + `@hono/node-server`                                                                                                                                                                                               |
+| Client            | **Vite** + **Solid** (TypeScript strict)                                                                                                                                                                                     |
+| Hosting model     | Open-source, **BYO-secrets**, **network-deployable** (not loopback-only). Owner self-hosts; we make it _doable_ (Docker + env + docs), we don't run the deploy.                                                              |
+| Multi-user        | **Single-owner now, multi-user-READY** — explicit singleton `__owner__` user dimension in data model + security. No signup/login system yet.                                                                                 |
+| Database          | **Keep SQLite** (`better-sqlite3`), persistent disk.                                                                                                                                                                         |
+| YouTube           | **Deferred to final phase.** Official **YouTube Data API v3** (OAuth). No ISRC → title/artist Tier-2 only. **Likes via `videos.rate`, not playlist insert; liked set not readable; quota-bound (~100 matches/day).** See §0. |
+| Client reactivity | **Solid** signals (revisitable for Preact at V4).                                                                                                                                                                            |
 
 ### Guiding principle
 
@@ -115,19 +117,19 @@ The five blueprint §0 invariants are **preserved** and re-confirmed every phase
   hidden; never invent a route.
 - **Auditability** — every operation/preflight user-attributed in the ledger; SSE replay + event log
   preserved.
-- **No autonomous scope creep** — multi-user is a *seam only*; pause points respected.
+- **No autonomous scope creep** — multi-user is a _seam only_; pause points respected.
 
 **Three §15 amendments required BEFORE building (human-attributed), all in Phase V0:**
 
 - [ ] **A1 — Network-deployable.** §11.0 "127.0.0.1-only" is replaced by env-driven
-  `BIND_HOST`/`ALLOWED_ORIGINS`/`ALLOWED_HOSTS` behind HTTPS. Show the replacement defenses are
-  ≥ as strong (Origin+Host+CSRF preserved, secrets stay server-side, HTTPS added).
+      `BIND_HOST`/`ALLOWED_ORIGINS`/`ALLOWED_HOSTS` behind HTTPS. Show the replacement defenses are
+      ≥ as strong (Origin+Host+CSRF preserved, secrets stay server-side, HTTPS added).
 - [ ] **A2 — Multi-user-ready data seam.** §1 lists multi-user as out-of-scope; this adds only the
-  *seam* (`UserCtx`, singleton `__owner__`, user-keyed storage) — no signup/login. Confirms scope
-  is not expanded operationally.
+      _seam_ (`UserCtx`, singleton `__owner__`, user-keyed storage) — no signup/login. Confirms scope
+      is not expanded operationally.
 - [ ] **A3 — One signed session cookie.** §11.0 "no cookies" → "one signed, HttpOnly, Secure,
-  SameSite=Strict session cookie carrying only `{userId}`; double-submit CSRF retained; no
-  third-party cookies."
+      SameSite=Strict session cookie carrying only `{userId}`; double-submit CSRF retained; no
+      third-party cookies."
 
 Later phases that need a §15 entry: **V2** (forward-only ledger migration, no data loss), **V6**
 (env-config + cookie specifics), **V7** (third provider + ISRC-absence honesty note).
@@ -199,6 +201,7 @@ build` produces a shell; blueprint §15 contains A1–A3.
 **Goal:** replace the ~30 two-platform branches with `MusicProvider` + registry.
 
 **Design decisions (resolved 2026-06-05 from reading `runner.ts`/`deps.ts`/`matcher.ts`):**
+
 - **`deps.match` gains a 3rd arg `destination: ProviderId`.** Today `deps.match(source, useCache)`
   infers "destination = the opposite platform" — breaks for a 3rd provider. The runner has
   `spec.destination` in scope, so pass it (runner.ts lines ~123 and ~264). This keeps
@@ -214,7 +217,7 @@ build` produces a shell; blueprint §15 contains A1–A3.
   `destProvider.id → {spotify_id|apple_catalog_id}` columns (no-op for unknown providers). The
   generalized `track_provider_ids` table lands in **V2**, not here — keeps V1 schema-compatible.
 - **Providers absorb platform quirks**: the Apple favorites→empty-D rule, library-vs-catalog
-  destId, empty-playlist 40403, and the `toCanonical` adapters all move *into* the provider
+  destId, empty-playlist 40403, and the `toCanonical` adapters all move _into_ the provider
   modules; `deps.ts` becomes thin registry lookups.
 
 - [x] `providers/types.ts` — `ProviderId`, `UserCtx`+`OWNER`, `ProviderCapabilities`
@@ -243,7 +246,7 @@ build` produces a shell; blueprint §15 contains A1–A3.
       (registry-routing seam), `providers/providers.test.ts` (provider dispatch + capability
       invariants + `appleLibraryToCanonical`). Migrated `match/match.test.ts` to fake providers.
 
-**AC:** ✅ Spotify→Apple ISRC match via `matchToDestination`; Apple→Spotify via the *same* function;
+**AC:** ✅ Spotify→Apple ISRC match via `matchToDestination`; Apple→Spotify via the _same_ function;
 `runner.ts`/`runner.test.ts` untouched & green; a `supportsIsrc:false` fake provider exercises
 Tier-2-only with no engine edits. **tsc clean · 341 PASS / 0 FAIL · eslint clean.**
 
@@ -265,13 +268,13 @@ behavior-preserving + invariants intact, safe to merge. 6 findings, all low: #1 
 - [x] `ledger/db.ts` — migration #2 (`LATEST_SCHEMA_VERSION` 1→2):
   - [x] `CREATE TABLE users(...)`; seed `'__owner__'`.
   - [x] `CREATE TABLE track_provider_ids(identity_key, provider_id, provider_kind, provider_ref,
-        PRIMARY KEY(...), FK→tracks ON DELETE CASCADE)` + index.
+PRIMARY KEY(...), FK→tracks ON DELETE CASCADE)` + index.
   - [x] **Backfill** from `spotify_id`→(spotify,default) / `apple_catalog_id`→(apple,default) /
         `apple_library_id`→(apple,library); old columns left in place.
   - [x] `ALTER TABLE catalog|operations|preflight_runs ADD COLUMN user_id ... DEFAULT '__owner__'`.
         **Catalog PK rebuild DEFERRED** to multi-user activation (single owner can't collide).
   - [x] **Bonus fix:** latent `schema_version` singleton-row bug (PK is `version` → `INSERT OR
-        REPLACE` appended a row); `setVersion` deletes-then-inserts, `getCurrentVersion` uses `MAX`.
+REPLACE` appended a row); `setVersion` deletes-then-inserts, `getCurrentVersion` uses `MAX`.
 - [x] `ledger/tracksCache.ts` — generalized: identity row + `get/putProviderRef`; matcher
       `cacheHit`/`persist` use them. `deleteCachedTrack` cascades the refs.
 - [ ] `auth/tokens.ts` reshape → **DEFERRED to V6** (lands with the session/user seam). Noted here.
@@ -282,7 +285,7 @@ behavior-preserving + invariants intact, safe to merge. 6 findings, all low: #1 
 **AC:** ✅ a **real-shaped v1 `ledger.sqlite`** migrates to v2 with **zero row loss** (pre/post counts
 asserted), correct backfill (incl. library kind), `user_id` defaulting, `schema_version=2` (single
 row), and a **no-op on re-open**; a v1-cached match **resolves through the matcher** post-migration
-(end-to-end backfill→cacheHit). Real ledger confirmed intact (1610 tracks, integrity ok).
+(end-to-end backfill→cacheHit). Real ledger confirmed intact (~1,600 tracks, integrity ok).
 **tsc + eslint clean · 373 PASS / 0 FAIL.**
 
 **Validation:** 5-persona workflow (`wf_1a423645-581`) → migration zero-data-loss + safe, cache
@@ -355,10 +358,11 @@ Playwright — matches Figma. **build:all + tsc clean · 417 PASS / 0 FAIL.**
 (2.2/1.5/3.6:1) → kept the fills, used dark pill text (7.8/11.5/4.9:1), AA in both themes.
 
 **Validation:** 5-persona workflow (`wf_cfb7f849-d54`) → 1 BLOCKER (a `kebab()` regex bug made all 8
-button CSS vars dead → buttons rendered unstyled but *looked* like buttons in the screenshot) — **fixed**
-+ added `css.test.ts` (var-superset + no-drift guard). Resolved: HIGH PermissionRow color-only state
-(→ visible text), MED dot 3:1 ring + FOUC pre-paint script + generated-CSS verification, LOW disabled
-legibility / `readStored` / `rem` sizes. Re-screenshotted: buttons now genuinely filled both themes.
+button CSS vars dead → buttons rendered unstyled but _looked_ like buttons in the screenshot) — **fixed**
+
+- added `css.test.ts` (var-superset + no-drift guard). Resolved: HIGH PermissionRow color-only state
+  (→ visible text), MED dot 3:1 ring + FOUC pre-paint script + generated-CSS verification, LOW disabled
+  legibility / `readStored` / `rem` sizes. Re-screenshotted: buttons now genuinely filled both themes.
 
 **Invariants:** none touched (pure UI); truthfulness — status pills reflect real engine state.
 
@@ -474,27 +478,27 @@ LL-read invented); non-destruction (additive); auditability (tier recorded).
 
 ## 5. Risks & guards
 
-| Risk | Owner phase | Guard |
-| --- | --- | --- |
-| Ledger migration data loss (irreversible, single-user) | V2 | Forward-only INSERT backfill; assert pre/post row counts on a copy of a **real** v1 db; keep v1 columns; back up before run. |
-| Breaking the 288-test suite during surface swap | V1, V3 | V1 keeps `OperationDeps`/`runner.ts` shapes; V3 keeps endpoint shapes → tests port mechanically. Green tests = merge gate. |
-| **Spotify dev-mode caps (validated §0): 5 users + owner-Premium; Extended Quota unreachable** | V6 | One instance ≤5 allowlisted users; `DEPLOY.md`/README state the cap + Premium requirement + the "self-host your own copy with your own BYO app" model. Not a code blocker — it's an honesty/docs item. |
-| Apple MusicKit JS HTTPS off localhost (validated §0: **no** per-origin allowlist — JWT-gated) | V6 | `DEPLOY.md` mandates HTTPS public origin; `musickit.html` served from `PUBLIC_ORIGIN`; server mints/refreshes the dev-token JWT; nonce flow unchanged; no invented workaround. |
-| YouTube has no ISRC → silent low-quality matches | V7 | `supportsIsrc:false` forces Tier-2; UI surfaces degradation; ledger records `tier:"search"`. |
-| **YouTube quota ≈100 matches/day + 200 writes/day (validated §0) — the biggest practical v2 risk** | V7 | Pre-flight quota estimate + warning; per-track 403 logged as `failed` (non-fatal, §12.5); UI states the limit; document the quota-extension request path. Don't promise large transfers. |
-| **YouTube liked set not readable (LL private)** | V7 | `likedReadable:false` → empty-D + ledger idempotency (Apple-favorites pattern); like via `videos.rate`; never invent an LL-read. |
-| Network exposure weakens loopback's implicit security | V6 | 1:1 Host/Origin/CSRF replacement + session cookie + HTTPS; grep test that JWT/`.p8`/tokens never reach browser or logs. |
-| Session cookie ↔ CSRF interaction | V6 | Keep double-submit CSRF **and** `SameSite=Strict`; cookie carries only `userId`, signed. |
-| "Multi-user-ready" scope creep | V0/V2 | Build only the seam (`UserCtx`, `__owner__`, keyed storage). No signup/login UI. Human-attributed §15. |
-| Provider abstraction leaks platform quirks (Apple 40403 empty-playlist, append-only, eventual consistency) | V1 | Quirks stay inside each provider module; capabilities express them to the engine; resume-soundness union unchanged. |
-| Dark palette fails WCAG AA | V4 | Derive against measured contrast ratios; AA check is an explicit AC; re-tune status colors. |
+| Risk                                                                                                       | Owner phase | Guard                                                                                                                                                                                                  |
+| ---------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Ledger migration data loss (irreversible, single-user)                                                     | V2          | Forward-only INSERT backfill; assert pre/post row counts on a copy of a **real** v1 db; keep v1 columns; back up before run.                                                                           |
+| Breaking the 288-test suite during surface swap                                                            | V1, V3      | V1 keeps `OperationDeps`/`runner.ts` shapes; V3 keeps endpoint shapes → tests port mechanically. Green tests = merge gate.                                                                             |
+| **Spotify dev-mode caps (validated §0): 5 users + owner-Premium; Extended Quota unreachable**              | V6          | One instance ≤5 allowlisted users; `DEPLOY.md`/README state the cap + Premium requirement + the "self-host your own copy with your own BYO app" model. Not a code blocker — it's an honesty/docs item. |
+| Apple MusicKit JS HTTPS off localhost (validated §0: **no** per-origin allowlist — JWT-gated)              | V6          | `DEPLOY.md` mandates HTTPS public origin; `musickit.html` served from `PUBLIC_ORIGIN`; server mints/refreshes the dev-token JWT; nonce flow unchanged; no invented workaround.                         |
+| YouTube has no ISRC → silent low-quality matches                                                           | V7          | `supportsIsrc:false` forces Tier-2; UI surfaces degradation; ledger records `tier:"search"`.                                                                                                           |
+| **YouTube quota ≈100 matches/day + 200 writes/day (validated §0) — the biggest practical v2 risk**         | V7          | Pre-flight quota estimate + warning; per-track 403 logged as `failed` (non-fatal, §12.5); UI states the limit; document the quota-extension request path. Don't promise large transfers.               |
+| **YouTube liked set not readable (LL private)**                                                            | V7          | `likedReadable:false` → empty-D + ledger idempotency (Apple-favorites pattern); like via `videos.rate`; never invent an LL-read.                                                                       |
+| Network exposure weakens loopback's implicit security                                                      | V6          | 1:1 Host/Origin/CSRF replacement + session cookie + HTTPS; grep test that JWT/`.p8`/tokens never reach browser or logs.                                                                                |
+| Session cookie ↔ CSRF interaction                                                                          | V6          | Keep double-submit CSRF **and** `SameSite=Strict`; cookie carries only `userId`, signed.                                                                                                               |
+| "Multi-user-ready" scope creep                                                                             | V0/V2       | Build only the seam (`UserCtx`, `__owner__`, keyed storage). No signup/login UI. Human-attributed §15.                                                                                                 |
+| Provider abstraction leaks platform quirks (Apple 40403 empty-playlist, append-only, eventual consistency) | V1          | Quirks stay inside each provider module; capabilities express them to the engine; resume-soundness union unchanged.                                                                                    |
+| Dark palette fails WCAG AA                                                                                 | V4          | Derive against measured contrast ratios; AA check is an explicit AC; re-tune status colors.                                                                                                            |
 
 ---
 
 ## 6. Verification
 
 - **Every phase:** `cd server && npm test` (288 green — hard merge gate); `npm run build` + `npm run
-  lint` clean; secrets audit before staging (gitignored paths untracked; grep staged diff for
+lint` clean; secrets audit before staging (gitignored paths untracked; grep staged diff for
   `BEGIN PRIVATE KEY`, Team/Key IDs, bearer strings).
 - **V1:** fake `supportsIsrc:false` provider exercises Tier-2-only with no engine edits; match +
   runner tests unchanged.

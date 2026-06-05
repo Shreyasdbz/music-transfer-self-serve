@@ -5,7 +5,17 @@ import { Catalog } from "./sections/Catalog.js";
 import { Operation } from "./sections/Operation.js";
 import { Status } from "./sections/Status.js";
 import { History } from "./sections/History.js";
-import { checkSession, loadAll, logout, refreshAuth, refreshGate, session, setToast, submitAccessToken, toast } from "./store.js";
+import {
+  checkSession,
+  loadAll,
+  logout,
+  refreshAuth,
+  refreshGate,
+  session,
+  setToast,
+  submitAccessToken,
+  toast,
+} from "./store.js";
 
 function Login(): JSX.Element {
   const [token, setToken] = createSignal("");
@@ -32,7 +42,11 @@ function Login(): JSX.Element {
       <p class="t-caption" style={{ color: "var(--color-text-muted)" }}>
         This instance is access-protected. Enter the access token to continue.
       </p>
-      <form onSubmit={(e) => void submit(e)} class="stack" style={{ "margin-top": "var(--space-lg)" }}>
+      <form
+        onSubmit={(e) => void submit(e)}
+        class="stack"
+        style={{ "margin-top": "var(--space-lg)" }}
+      >
         <input
           ref={inputRef}
           class="text-input t-note"
@@ -62,7 +76,13 @@ function Home(): JSX.Element {
   return (
     <div class="page">
       <Show when={session.required}>
-        <div style={{ display: "flex", "justify-content": "flex-end", "margin-bottom": "var(--space-sm)" }}>
+        <div
+          style={{
+            display: "flex",
+            "justify-content": "flex-end",
+            "margin-bottom": "var(--space-sm)",
+          }}
+        >
           <Button variant="tier1" onClick={() => void logout()}>
             Log out
           </Button>
@@ -103,7 +123,10 @@ export function App(): JSX.Element {
 
   return (
     <>
-      <Show when={session.checked && session.required && !session.authenticated} fallback={<Home />}>
+      <Show
+        when={session.checked && session.required && !session.authenticated}
+        fallback={<Home />}
+      >
         <Login />
       </Show>
       <Show when={toast()}>

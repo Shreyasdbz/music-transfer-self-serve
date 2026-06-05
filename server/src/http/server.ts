@@ -26,25 +26,22 @@ export function startHttpServer(): Promise<ServerHandle> {
   const app = buildApp(csrfToken);
 
   return new Promise<ServerHandle>((resolvePromise, rejectPromise) => {
-    const server = serve(
-      { fetch: app.fetch, hostname: HTTP_HOST, port: HTTP_PORT },
-      (info) => {
-        log.info("http.listening", { origin: HTTP_ORIGIN, port: info.port });
-        resolvePromise({
-          server: server as Server,
-          csrfToken,
-          close: () =>
-            new Promise<void>((r, j) => {
-              // Force-close lingering sockets (e.g. open SSE streams) so close()
-              // resolves promptly instead of waiting on keep-alive connections —
-              // otherwise a graceful shutdown (or a test) hangs on an active
-              // event stream. Node ≥18.2.
-              (server as Server).closeAllConnections?.();
-              (server as Server).close((e) => (e ? j(e) : r()));
-            }),
-        });
-      },
-    ) as Server;
+    const server = serve({ fetch: app.fetch, hostname: HTTP_HOST, port: HTTP_PORT }, (info) => {
+      log.info("http.listening", { origin: HTTP_ORIGIN, port: info.port });
+      resolvePromise({
+        server: server as Server,
+        csrfToken,
+        close: () =>
+          new Promise<void>((r, j) => {
+            // Force-close lingering sockets (e.g. open SSE streams) so close()
+            // resolves promptly instead of waiting on keep-alive connections —
+            // otherwise a graceful shutdown (or a test) hangs on an active
+            // event stream. Node ≥18.2.
+            (server as Server).closeAllConnections?.();
+            (server as Server).close((e) => (e ? j(e) : r()));
+          }),
+      });
+    }) as Server;
 
     server.on("error", (e: Error) => {
       log.error("http.listen_error", { message: e.message });

@@ -14,7 +14,8 @@
 import type { CanonicalTrack } from "../../match/identity.js";
 import type { DestTrack, MusicProvider, ProviderCapabilities, UserCtx } from "../types.js";
 
-const UNAVAILABLE = "provider_unavailable:youtube — YouTube Music support is coming in a future update.";
+const UNAVAILABLE =
+  "provider_unavailable:youtube — YouTube Music support is coming in a future update.";
 
 /** Honest forward-looking capabilities: no ISRC (Tier-2 only), liked set not
  * readable via API, append-only playlist writes, additive-only. Sizes are 0

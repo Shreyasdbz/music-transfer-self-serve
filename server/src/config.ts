@@ -27,7 +27,10 @@ export const TOKENS_PATH = resolve(DATA_DIR, "tokens.json");
 // so the tool is self-hostable behind an HTTPS reverse proxy. With no env set,
 // these resolve to the original loopback values (no regression).
 function csv(v: string | undefined): string[] {
-  return (v ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  return (v ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 /** Address the server LISTENS on. Default 127.0.0.1; set 0.0.0.0 ONLY behind a
@@ -36,7 +39,9 @@ export const HTTP_HOST = process.env["BIND_HOST"]?.trim() || "127.0.0.1";
 function parsePort(raw: string | undefined): number {
   const p = Number(raw?.trim() || "8888");
   if (!Number.isInteger(p) || p < 1 || p > 65535) {
-    throw new Error(`PORT must be an integer 1-65535, got: ${JSON.stringify(raw)} (see .env.example)`);
+    throw new Error(
+      `PORT must be an integer 1-65535, got: ${JSON.stringify(raw)} (see .env.example)`,
+    );
   }
   return p;
 }
@@ -44,7 +49,9 @@ export const HTTP_PORT = parsePort(process.env["PORT"]);
 
 /** The externally-visible origin (what the browser sees). Behind a proxy this
  * is e.g. https://music.example.com. Default = loopback. */
-export const PUBLIC_ORIGIN = (process.env["PUBLIC_ORIGIN"]?.trim() || `http://127.0.0.1:${HTTP_PORT}`).replace(/\/+$/, "");
+export const PUBLIC_ORIGIN = (
+  process.env["PUBLIC_ORIGIN"]?.trim() || `http://127.0.0.1:${HTTP_PORT}`
+).replace(/\/+$/, "");
 /** Kept as an alias for logging / the redirect URI base. */
 export const HTTP_ORIGIN = PUBLIC_ORIGIN;
 
@@ -64,7 +71,8 @@ export const ALLOWED_HOSTS: readonly string[] = csv(process.env["ALLOWED_HOSTS"]
 export const INSTANCE_ACCESS_TOKEN = process.env["INSTANCE_ACCESS_TOKEN"]?.trim() || "";
 /** HMAC secret for the session cookie. Default = random per server start
  * (sessions don't survive a restart unless the operator sets this). */
-export const SESSION_SECRET = process.env["SESSION_SECRET"]?.trim() || randomBytes(32).toString("hex");
+export const SESSION_SECRET =
+  process.env["SESSION_SECRET"]?.trim() || randomBytes(32).toString("hex");
 
 /** Spotify redirect URI — derived from PUBLIC_ORIGIN; MUST match byte-for-byte
  * across .env, the Spotify Dashboard, /api/auth/spotify/start, and the callback
@@ -124,8 +132,7 @@ export function checkEnv(): EnvCheckResult {
       keyFileReadable = false;
     }
   }
-  const redirectUriMatches =
-    process.env["SPOTIFY_REDIRECT_URI"] === SPOTIFY_REDIRECT_URI_EXPECTED;
+  const redirectUriMatches = process.env["SPOTIFY_REDIRECT_URI"] === SPOTIFY_REDIRECT_URI_EXPECTED;
   return {
     ok: missing.length === 0 && keyFileReadable && redirectUriMatches,
     missingKeys: missing,
@@ -181,9 +188,7 @@ export function loadSpotifyConfig(): SpotifyConfig {
     if (!process.env[k]?.trim()) missing.push(k);
   }
   if (missing.length > 0) {
-    throw new Error(
-      `Missing Spotify env vars: ${missing.join(", ")} (see .env.example)`,
-    );
+    throw new Error(`Missing Spotify env vars: ${missing.join(", ")} (see .env.example)`);
   }
   if (process.env["SPOTIFY_REDIRECT_URI"] !== SPOTIFY_REDIRECT_URI_EXPECTED) {
     throw new Error(

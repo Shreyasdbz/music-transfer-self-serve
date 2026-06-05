@@ -20,9 +20,27 @@
 // by provider id (get/putProviderRef) — so the cache generalizes to any number
 // of providers, not just spotify/apple.
 
-import { getCachedTrack, putCachedTrack, getProviderRef, putProviderRef } from "../ledger/tracksCache.js";
-import { durationsClose, identityKey, normalize, normArtist, normTitle, type CanonicalTrack } from "./identity.js";
-import { isAccepted, score, SCORE_ACCEPT_THRESHOLD, DURATION_TOLERANCE_MS, type ScoreBreakdown } from "./scoring.js";
+import {
+  getCachedTrack,
+  putCachedTrack,
+  getProviderRef,
+  putProviderRef,
+} from "../ledger/tracksCache.js";
+import {
+  durationsClose,
+  identityKey,
+  normalize,
+  normArtist,
+  normTitle,
+  type CanonicalTrack,
+} from "./identity.js";
+import {
+  isAccepted,
+  score,
+  SCORE_ACCEPT_THRESHOLD,
+  DURATION_TOLERANCE_MS,
+  type ScoreBreakdown,
+} from "./scoring.js";
 import { OWNER, type MusicProvider } from "../providers/types.js";
 
 // ── Result types ───────────────────────────────────────────────────────
@@ -252,7 +270,11 @@ export async function matchToDestination(
   // Tier 2 — Scored search.
   const term = `${source.title} ${source.primaryArtist}`.trim();
   if (term.length > 0) {
-    const candidates = await destProvider.searchByTerm(OWNER, term, destProvider.capabilities.searchLimit);
+    const candidates = await destProvider.searchByTerm(
+      OWNER,
+      term,
+      destProvider.capabilities.searchLimit,
+    );
     const best = bestScored(source, candidates);
     if (best && isAccepted(best.breakdown)) {
       const result: MatchResult = {
@@ -279,7 +301,13 @@ export async function matchToDestination(
   }
 
   // Tier 3 — nothing returned.
-  const result: MatchResult = { tier: "unmatched", confidence: 0, destination: undefined, rejected: undefined, fromCache: false };
+  const result: MatchResult = {
+    tier: "unmatched",
+    confidence: 0,
+    destination: undefined,
+    rejected: undefined,
+    fromCache: false,
+  };
   persist(source, destProvider, result);
   return result;
 }

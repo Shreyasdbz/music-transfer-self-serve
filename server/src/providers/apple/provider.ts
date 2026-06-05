@@ -29,7 +29,9 @@ const APPLE_SEARCH_LIMIT = 25;
  * spuriously earn the +10 explicit-match bonus against an unrated Apple song. */
 export function appleCatalogToCanonical(t: AppleCatalogSong): CanonicalTrack {
   const explicit =
-    t.attributes.contentRating === undefined ? undefined : t.attributes.contentRating === "explicit";
+    t.attributes.contentRating === undefined
+      ? undefined
+      : t.attributes.contentRating === "explicit";
   return {
     isrc: normIsrc(t.attributes.isrc),
     title: t.attributes.name,
@@ -83,7 +85,8 @@ export const appleProvider: MusicProvider = {
 
   async readSourceTracks(_ctx: UserCtx, target: ResolvedTarget): Promise<CanonicalTrack[]> {
     if (target.kind === "favorites") return (await listLibrarySongs()).map(appleLibraryToCanonical);
-    if (target.kind === "playlist") return (await listLibraryPlaylistTracks(target.id)).map(appleLibraryToCanonical);
+    if (target.kind === "playlist")
+      return (await listLibraryPlaylistTracks(target.id)).map(appleLibraryToCanonical);
     throw new Error("invalid_apple_source_target");
   },
 
@@ -93,7 +96,10 @@ export const appleProvider: MusicProvider = {
       const songs = await listLibraryPlaylistTracks(target.id);
       // Write id is the CATALOG id (what add-tracks uses), falling back to the
       // library id when the catalog relationship is absent.
-      return songs.map((s) => ({ canonical: appleLibraryToCanonical(s), destId: libraryCatalogId(s) ?? s.id }));
+      return songs.map((s) => ({
+        canonical: appleLibraryToCanonical(s),
+        destId: libraryCatalogId(s) ?? s.id,
+      }));
     }
     // favorites destination: not readable (see likedReadable) → empty D.
     return [];

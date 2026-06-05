@@ -24,7 +24,13 @@ import {
 
 export interface CatalogEvent {
   readonly seq: number;
-  readonly type: "platform_start" | "playlist" | "platform_done" | "cancelled" | "complete" | "error";
+  readonly type:
+    | "platform_start"
+    | "playlist"
+    | "platform_done"
+    | "cancelled"
+    | "complete"
+    | "error";
   readonly platform?: Platform;
   readonly name?: string;
   readonly index?: number;
@@ -82,7 +88,13 @@ async function refreshSpotify(startedAt: string): Promise<void> {
       fetched_at: startedAt,
     });
     written++;
-    emit({ type: "playlist", platform: "spotify", name: p.name, index: i + 1, total: playlists.length });
+    emit({
+      type: "playlist",
+      platform: "spotify",
+      name: p.name,
+      index: i + 1,
+      total: playlists.length,
+    });
   }
   // Liked Songs singleton (cheap total count).
   if (!state.cancelled) {
@@ -125,7 +137,13 @@ async function refreshApple(startedAt: string): Promise<void> {
       fetched_at: startedAt,
     });
     written++;
-    emit({ type: "playlist", platform: "apple", name: p.attributes.name, index: i + 1, total: playlists.length });
+    emit({
+      type: "playlist",
+      platform: "apple",
+      name: p.attributes.name,
+      index: i + 1,
+      total: playlists.length,
+    });
   }
   // Favorites singleton. Apple has no cheap "favorites count"; store the row
   // so it appears in the dropdown, count unknown.
@@ -172,7 +190,11 @@ export function startCatalogRefresh(): CatalogRefreshHandle {
           // Redact before the message hits the SSE wire (§12 — every SSE
           // payload must be redaction-safe; a non-JSON 2xx body would
           // otherwise surface raw via a SyntaxError message).
-          emit({ type: "error", platform: "spotify", message: String(redact((err as Error).message)) });
+          emit({
+            type: "error",
+            platform: "spotify",
+            message: String(redact((err as Error).message)),
+          });
           log.warn("catalog.spotify_refresh_failed", { message: (err as Error).message });
         }
       }
@@ -180,7 +202,11 @@ export function startCatalogRefresh(): CatalogRefreshHandle {
         try {
           await refreshApple(startedAt);
         } catch (err) {
-          emit({ type: "error", platform: "apple", message: String(redact((err as Error).message)) });
+          emit({
+            type: "error",
+            platform: "apple",
+            message: String(redact((err as Error).message)),
+          });
           log.warn("catalog.apple_refresh_failed", { message: (err as Error).message });
         }
       }

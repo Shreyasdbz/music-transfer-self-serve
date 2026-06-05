@@ -43,7 +43,8 @@ const REDACTED_BODY_KEYS = new Set([
 const REDACTED_QUERY_PARAMS = REDACTED_BODY_KEYS;
 
 const BEARER_RE = /Bearer\s+[A-Za-z0-9._~+/=-]{40,}/g;
-const PRIVATE_KEY_RE = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g;
+const PRIVATE_KEY_RE =
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g;
 
 // Captured at module init; if not present yet (e.g. logger imported before
 // .env is loaded), the values default to never-matching sentinels.
@@ -81,12 +82,16 @@ export function redactUrl(url: string): string {
   return mutated ? redactString(parsed.toString()) : redactString(url);
 }
 
-export function redactHeaders(headers: Record<string, string | string[] | undefined>): Record<string, string> {
+export function redactHeaders(
+  headers: Record<string, string | string[] | undefined>,
+): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) {
     if (value === undefined) continue;
     const v = Array.isArray(value) ? value.join(", ") : value;
-    out[name] = REDACTED_HEADER_NAMES.has(name.toLowerCase()) ? "<redacted:header>" : redactString(v);
+    out[name] = REDACTED_HEADER_NAMES.has(name.toLowerCase())
+      ? "<redacted:header>"
+      : redactString(v);
   }
   return out;
 }

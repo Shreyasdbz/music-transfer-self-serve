@@ -88,7 +88,10 @@ if (teamId && keyId && keyPath && keyExists) {
 
   const popup = mintPopupDevToken();
   const decoded = jwt.decode(popup, { complete: true });
-  assert(decoded?.header?.alg === "ES256", `AC2(a): popup JWT alg=ES256 (got ${decoded?.header?.alg})`);
+  assert(
+    decoded?.header?.alg === "ES256",
+    `AC2(a): popup JWT alg=ES256 (got ${decoded?.header?.alg})`,
+  );
   assert(decoded?.header?.kid === keyId, "AC2(a): popup JWT kid === APPLE_KEY_ID");
 
   const payload = decoded?.payload as { iss?: string; exp?: number; iat?: number } | undefined;
@@ -140,7 +143,10 @@ if (teamId && keyId && keyPath && keyExists) {
   assert(r4.kind === "ok", `AC3(d): fresh nonce + MUT → ok (got ${r4.kind})`);
   assert(!appleTest.hasNonce("fresh-nonce"), "AC3(d): nonce consumed after ok");
   const r5 = handleCallback("fresh-nonce", "test-mut-value");
-  assert(r5.kind === "nonce_unknown", `AC3(d): replay of consumed nonce → nonce_unknown (got ${r5.kind})`);
+  assert(
+    r5.kind === "nonce_unknown",
+    `AC3(d): replay of consumed nonce → nonce_unknown (got ${r5.kind})`,
+  );
 
   // --- AC #4: nonce sweeper ----------------------------------------------
 
@@ -161,9 +167,18 @@ if (teamId && keyId && keyPath && keyExists) {
   // buildPopupStart also nonce-store-mutates — confirm shape and population.
   appleTest.clear();
   const start = buildPopupStart();
-  assert(typeof start.developerToken === "string" && start.developerToken.length > 100, "AC2(d): buildPopupStart returns a non-empty developerToken");
-  assert(typeof start.nonce === "string" && start.nonce.length >= 32, "AC3(e): buildPopupStart returns a ≥32-char nonce");
-  assert(appleTest.hasNonce(start.nonce), "AC3(e): buildPopupStart inserts the nonce into the store");
+  assert(
+    typeof start.developerToken === "string" && start.developerToken.length > 100,
+    "AC2(d): buildPopupStart returns a non-empty developerToken",
+  );
+  assert(
+    typeof start.nonce === "string" && start.nonce.length >= 32,
+    "AC3(e): buildPopupStart returns a ≥32-char nonce",
+  );
+  assert(
+    appleTest.hasNonce(start.nonce),
+    "AC3(e): buildPopupStart inserts the nonce into the store",
+  );
 
   appleTest.clear();
 } else {

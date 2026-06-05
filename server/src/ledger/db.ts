@@ -220,9 +220,7 @@ function reconcileStrandedRunning(db: DB): void {
   const now = new Date().toISOString();
   const tx = db.transaction(() => {
     const ops = db
-      .prepare(
-        "SELECT id FROM operations WHERE status = 'running' AND finished_at IS NULL",
-      )
+      .prepare("SELECT id FROM operations WHERE status = 'running' AND finished_at IS NULL")
       .all() as { id: string }[];
     const updateOp = db.prepare(
       "UPDATE operations SET status = 'interrupted', finished_at = ? WHERE id = ?",
@@ -240,9 +238,7 @@ function reconcileStrandedRunning(db: DB): void {
     }
 
     const pfRuns = db
-      .prepare(
-        "SELECT id FROM preflight_runs WHERE status = 'running' AND finished_at IS NULL",
-      )
+      .prepare("SELECT id FROM preflight_runs WHERE status = 'running' AND finished_at IS NULL")
       .all() as { id: string }[];
     const updatePf = db.prepare(
       "UPDATE preflight_runs SET status = 'interrupted', finished_at = ? WHERE id = ?",

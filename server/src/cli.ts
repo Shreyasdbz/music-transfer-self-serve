@@ -11,7 +11,16 @@ import { getPreflightRun, computeGateState } from "./ledger/preflightStore.js";
 const GROUPS: { label: string; names: string[] }[] = [
   { label: "Environment", names: ["env"] },
   { label: "Spotify", names: ["spotify_token", "spotify_scopes", "spotify_me", "spotify_search"] },
-  { label: "Apple", names: ["apple_dev_token", "apple_mut", "apple_storefront", "apple_library_read", "apple_isrc_lookup"] },
+  {
+    label: "Apple",
+    names: [
+      "apple_dev_token",
+      "apple_mut",
+      "apple_storefront",
+      "apple_library_read",
+      "apple_isrc_lookup",
+    ],
+  },
 ];
 
 const MARK: Record<string, string> = { pass: "✅", fail: "❌", skip: "⏭️ " };
@@ -37,7 +46,9 @@ async function doctor(): Promise<number> {
       const c = byName.get(name);
       if (!c) continue;
       const detail = c.detail ? redactedDetailLine(JSON.parse(c.detail)) : "";
-      process.stdout.write(`    ${MARK[c.status] ?? "?"} ${name}${detail ? "  — " + detail : ""}\n`);
+      process.stdout.write(
+        `    ${MARK[c.status] ?? "?"} ${name}${detail ? "  — " + detail : ""}\n`,
+      );
     }
   }
 

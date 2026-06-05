@@ -35,7 +35,10 @@ for (const [name, value] of headerCases) {
   );
 }
 const ct = redactHeaders({ "Content-Type": "application/json" });
-assert(ct["Content-Type"] === "application/json", "redactHeaders: non-sensitive header passes through");
+assert(
+  ct["Content-Type"] === "application/json",
+  "redactHeaders: non-sensitive header passes through",
+);
 
 // ── redact — every key in REDACTED_BODY_KEYS, every casing ───────────────
 
@@ -63,7 +66,10 @@ for (const [key, value] of bodyKeyCases) {
 
 // Nested + array + mixed casing
 const nested = redact({
-  outer: { Access_Token: "shouldnt_match_exact_case_in_set_but_lookup_is_lowercased_so_DOES_match", inner: { code: "X" } },
+  outer: {
+    Access_Token: "shouldnt_match_exact_case_in_set_but_lookup_is_lowercased_so_DOES_match",
+    inner: { code: "X" },
+  },
   arr: [{ refresh_token: "Y" }, { keep: "Z" }],
 });
 const ns = JSON.stringify(nested);
@@ -85,7 +91,8 @@ assert(shortOut === `header: ${bearerShort}`, `redact: short Bearer pass-through
 // Synthetic PEM-shaped fixture — NOT a real key, just enough chars to
 // exercise the BEGIN…END regex. The redactor MUST scrub it regardless of
 // payload contents. Pre-commit audits can safely ignore this line.
-const pem = "-----BEGIN EC PRIVATE KEY-----\nFAKEKEYBYTESforTESTfixtureONLY\n-----END EC PRIVATE KEY-----";
+const pem =
+  "-----BEGIN EC PRIVATE KEY-----\nFAKEKEYBYTESforTESTfixtureONLY\n-----END EC PRIVATE KEY-----";
 const pemOut = redact(`key=${pem}`) as string;
 assert(pemOut.includes("<redacted:private-key>"), "redact: PEM block redacted");
 assert(!pemOut.includes("FAKEKEYBYTES"), "redact: PEM body purged");
@@ -111,7 +118,10 @@ if (process.env["APPLE_TEAM_ID"] && process.env["APPLE_TEAM_ID"].length >= 6) {
 
 const urls: [string, string[]][] = [
   ["https://api.example/x?code=abc&state=xyz&keep=ok", ["code=%3C", "state=%3C", "keep=ok"]],
-  ["https://api.example/x?access_token=AT&refresh_token=RT", ["access_token=%3C", "refresh_token=%3C"]],
+  [
+    "https://api.example/x?access_token=AT&refresh_token=RT",
+    ["access_token=%3C", "refresh_token=%3C"],
+  ],
   ["https://api.example/x?nonce=N&music_user_token=MUT", ["nonce=%3C", "music_user_token=%3C"]],
   ["https://api.example/x?developer_token=DT&mut=M", ["developer_token=%3C", "mut=%3C"]],
 ];
@@ -138,6 +148,9 @@ assert(
 // The check uses parentKey.toLowerCase(); ensure each REDACTED_BODY_KEYS
 // entry is already lowercase (else the set membership lookup misses).
 const upperCode = JSON.stringify(redact({ Code: "X" }));
-assert(upperCode.includes("<redacted:secret>"), "redact: uppercase parent key still matches via toLowerCase");
+assert(
+  upperCode.includes("<redacted:secret>"),
+  "redact: uppercase parent key still matches via toLowerCase",
+);
 
 process.exit(process.exitCode ?? 0);

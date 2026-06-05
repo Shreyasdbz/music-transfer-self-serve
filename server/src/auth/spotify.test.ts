@@ -14,7 +14,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { SPOTIFY_REDIRECT_URI_EXPECTED } from "../config.js";
-import { __test as spotifyTest, buildAuthorizeUrl, handleCallback, REQUIRED_SPOTIFY_SCOPES } from "./spotify.js";
+import {
+  __test as spotifyTest,
+  buildAuthorizeUrl,
+  handleCallback,
+  REQUIRED_SPOTIFY_SCOPES,
+} from "./spotify.js";
 
 const ROOT = resolve(import.meta.dirname, "..", "..");
 
@@ -58,7 +63,8 @@ assert(
 // (c) authorize URL's redirect_uri param decodes byte-equal to expected
 //     buildAuthorizeUrl() needs env. Set the minimum keys if absent.
 if (!process.env["SPOTIFY_CLIENT_ID"]) process.env["SPOTIFY_CLIENT_ID"] = "test_client_id";
-if (!process.env["SPOTIFY_REDIRECT_URI"]) process.env["SPOTIFY_REDIRECT_URI"] = SPOTIFY_REDIRECT_URI_EXPECTED;
+if (!process.env["SPOTIFY_REDIRECT_URI"])
+  process.env["SPOTIFY_REDIRECT_URI"] = SPOTIFY_REDIRECT_URI_EXPECTED;
 if (!process.env["APPLE_TEAM_ID"]) process.env["APPLE_TEAM_ID"] = "ZZZTEAMZZZZ";
 if (!process.env["APPLE_KEY_ID"]) process.env["APPLE_KEY_ID"] = "ZZZKEYZZZZZ";
 if (!process.env["APPLE_PRIVATE_KEY_PATH"]) process.env["APPLE_PRIVATE_KEY_PATH"] = ".env.example"; // any readable file
@@ -85,7 +91,9 @@ if (existsSync(envPath)) {
       `AC2(d): .env SPOTIFY_REDIRECT_URI === expected ("${envValue}" vs "${SPOTIFY_REDIRECT_URI_EXPECTED}")`,
     );
   } else {
-    skip("AC2(d): .env present but SPOTIFY_REDIRECT_URI is empty (covered by runtime loadSpotifyConfig)");
+    skip(
+      "AC2(d): .env present but SPOTIFY_REDIRECT_URI is empty (covered by runtime loadSpotifyConfig)",
+    );
   }
 } else {
   skip("AC2(d): .env not present — gitignored, dev-only check");
@@ -96,7 +104,10 @@ if (existsSync(envPath)) {
 // flow being silently weakened in the future.
 const urlScopes = (parsed.searchParams.get("scope") ?? "").split(" ");
 const missingScopes = REQUIRED_SPOTIFY_SCOPES.filter((s) => !urlScopes.includes(s));
-assert(missingScopes.length === 0, `AC2(e): authorize URL contains all 6 required scopes (missing: ${missingScopes.join(", ") || "none"})`);
+assert(
+  missingScopes.length === 0,
+  `AC2(e): authorize URL contains all 6 required scopes (missing: ${missingScopes.join(", ") || "none"})`,
+);
 assert(
   parsed.searchParams.get("code_challenge_method") === "S256",
   "AC2(e): authorize URL uses S256 code challenge",
@@ -125,10 +136,10 @@ assert(!spotifyTest.hasState("expired-state"), "AC3(b): expired state entry purg
 
 spotifyTest.clear();
 const now = Date.now();
-spotifyTest.injectState("fresh", "v1", now);                       // 0 min old
-spotifyTest.injectState("recent", "v2", now - 9 * 60 * 1000);      // 9 min old (under TTL)
-spotifyTest.injectState("stale", "v3", now - 11 * 60 * 1000);      // 11 min old (expired)
-spotifyTest.injectState("ancient", "v4", now - 60 * 60 * 1000);    // 1 hr old (expired)
+spotifyTest.injectState("fresh", "v1", now); // 0 min old
+spotifyTest.injectState("recent", "v2", now - 9 * 60 * 1000); // 9 min old (under TTL)
+spotifyTest.injectState("stale", "v3", now - 11 * 60 * 1000); // 11 min old (expired)
+spotifyTest.injectState("ancient", "v4", now - 60 * 60 * 1000); // 1 hr old (expired)
 assert(spotifyTest.size() === 4, `AC4: sweeper test seeded 4 entries (got ${spotifyTest.size()})`);
 
 const purged = spotifyTest.runSweep();

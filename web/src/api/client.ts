@@ -151,14 +151,17 @@ export const api = {
   providers: () => getJson<{ providers: Provider[] }>("/api/providers").then((r) => r.providers),
   gate: () => getJson<GateState>("/api/gate"),
   spotifyStart: () => postJson<{ authorizeUrl: string }>("/api/auth/spotify/start"),
-  appleStart: () => postJson<{ developerToken: string; nonce: string; appName: string }>("/api/auth/apple/start"),
+  appleStart: () =>
+    postJson<{ developerToken: string; nonce: string; appName: string }>("/api/auth/apple/start"),
   preflightLatest: () => getJson<PreflightRun | null>("/api/preflight/latest"),
   preflightRun: () => postJson<{ id: string }>("/api/preflight/run"),
   catalog: () => getJson<CatalogResponse>("/api/catalog"),
   catalogRefresh: () => postJson<{ started: true }>("/api/catalog/refresh"),
   catalogCancel: () => postJson<{ cancelled: boolean }>("/api/catalog/refresh/cancel"),
-  operations: () => getJson<{ operations: Operation[] }>("/api/operations").then((r) => r.operations),
-  operation: (id: string) => getJson<{ operation: Operation; events: unknown[] }>(`/api/operations/${id}`),
+  operations: () =>
+    getJson<{ operations: Operation[] }>("/api/operations").then((r) => r.operations),
+  operation: (id: string) =>
+    getJson<{ operation: Operation; events: unknown[] }>(`/api/operations/${id}`),
   startOperation: (req: OperationRequest) => postJson<{ id: string }>("/api/operations", req),
 };
 
@@ -209,6 +212,23 @@ export function openSSE(
   return { close };
 }
 
-export const OPERATION_EVENTS = ["stage", "match", "skip", "write", "unmatched", "error", "done", "interrupted"];
+export const OPERATION_EVENTS = [
+  "stage",
+  "match",
+  "skip",
+  "write",
+  "unmatched",
+  "error",
+  "done",
+  "interrupted",
+];
 export const PREFLIGHT_EVENTS = ["check", "complete"];
-export const CATALOG_EVENTS = ["platform_start", "playlist", "platform_done", "complete", "cancelled", "idle", "error"];
+export const CATALOG_EVENTS = [
+  "platform_start",
+  "playlist",
+  "platform_done",
+  "complete",
+  "cancelled",
+  "idle",
+  "error",
+];

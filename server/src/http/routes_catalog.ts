@@ -43,7 +43,8 @@ export function registerCatalogRoutes(app: Hono): void {
       void handle.done.catch(() => undefined);
       return c.json({ started: true }, 202);
     } catch (e) {
-      if (e instanceof CatalogRefreshRunningError) return err(c, 409, "catalog_refresh_already_running");
+      if (e instanceof CatalogRefreshRunningError)
+        return err(c, 409, "catalog_refresh_already_running");
       log.error("catalog.refresh_route_failed", { message: (e as Error).message });
       return err(c, 500, "catalog_refresh_failed");
     }

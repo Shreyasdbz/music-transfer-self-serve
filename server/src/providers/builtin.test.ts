@@ -36,7 +36,10 @@ assert(apple.capabilities.playlistAppendOnly === true, "apple playlists append-o
 
 // Additive-only invariant is encoded in the type, assert it holds at runtime too.
 for (const p of listProviders()) {
-  assert(p.capabilities.supportsLikedRemoval === false, `${p.id}: supportsLikedRemoval is false (additive-only)`);
+  assert(
+    p.capabilities.supportsLikedRemoval === false,
+    `${p.id}: supportsLikedRemoval is false (additive-only)`,
+  );
 }
 
 process.stdout.write("builtin.test.ts done\n");

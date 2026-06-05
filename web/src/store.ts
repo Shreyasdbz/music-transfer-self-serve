@@ -21,12 +21,22 @@ import {
   type TargetInput,
 } from "./api/client.js";
 
-const zeroCounts = (): OperationSummary => ({ read: 0, matched: 0, skipped: 0, written: 0, unmatched: 0, failed: 0 });
+const zeroCounts = (): OperationSummary => ({
+  read: 0,
+  matched: 0,
+  skipped: 0,
+  written: 0,
+  unmatched: 0,
+  failed: 0,
+});
 
 // ── Top-level state ──────────────────────────────────────────────────────
 export const [authStatus, setAuthStatus] = createSignal<AuthStatus | null>(null);
 export const [providers, setProviders] = createSignal<Provider[]>([]);
-export const [gate, setGate] = createSignal<GateState>({ open: false, reason: "Permissions not checked yet." });
+export const [gate, setGate] = createSignal<GateState>({
+  open: false,
+  reason: "Permissions not checked yet.",
+});
 export const [catalog, setCatalog] = createSignal<CatalogResponse | null>(null);
 export const [history, setHistory] = createSignal<Operation[]>([]);
 export const [toast, setToast] = createSignal<string>("");
@@ -38,7 +48,11 @@ export interface SessionState {
   authenticated: boolean;
   checked: boolean;
 }
-export const [session, setSession] = createStore<SessionState>({ required: false, authenticated: true, checked: false });
+export const [session, setSession] = createStore<SessionState>({
+  required: false,
+  authenticated: true,
+  checked: false,
+});
 
 export async function checkSession(): Promise<void> {
   try {
@@ -100,13 +114,20 @@ export interface PreflightState {
   checks: Record<number, PreflightCheck>;
   status: string;
 }
-export const [preflight, setPreflight] = createStore<PreflightState>({ running: false, checks: {}, status: "" });
+export const [preflight, setPreflight] = createStore<PreflightState>({
+  running: false,
+  checks: {},
+  status: "",
+});
 
 export interface CatalogRefreshState {
   running: boolean;
   message: string;
 }
-export const [catalogRefresh, setCatalogRefresh] = createStore<CatalogRefreshState>({ running: false, message: "" });
+export const [catalogRefresh, setCatalogRefresh] = createStore<CatalogRefreshState>({
+  running: false,
+  message: "",
+});
 
 export interface RunState {
   id: string;
@@ -162,7 +183,10 @@ export async function refreshHistory(): Promise<void> {
 export async function loadAll(): Promise<void> {
   await Promise.all([
     refreshAuth(),
-    api.providers().then(setProviders).catch(() => undefined),
+    api
+      .providers()
+      .then(setProviders)
+      .catch(() => undefined),
     refreshGate(),
     refreshCatalog(),
     refreshHistory(),
@@ -177,7 +201,15 @@ function resumeRunningOperation(): void {
   if (run.running) return;
   const running = history().find((o) => o.status === "running");
   if (!running) return;
-  setRun({ id: running.id, stage: "reconnecting", counts: zeroCounts(), log: [], status: "running", running: true, logline: "" });
+  setRun({
+    id: running.id,
+    stage: "reconnecting",
+    counts: zeroCounts(),
+    log: [],
+    status: "running",
+    running: true,
+    logline: "",
+  });
   watchOperation(running.id);
 }
 
@@ -249,7 +281,8 @@ export async function startCatalogRefresh(): Promise<void> {
       (type, data) => {
         const d = data as { platform?: string; name?: string };
         if (type === "platform_start") setCatalogRefresh("message", `Refreshing ${d.platform}…`);
-        else if (type === "playlist") setCatalogRefresh("message", `${d.platform}: ${d.name ?? "playlist"}`);
+        else if (type === "playlist")
+          setCatalogRefresh("message", `${d.platform}: ${d.name ?? "playlist"}`);
         else if (type === "idle") setCatalogRefresh("message", "");
       },
       () => {
@@ -281,7 +314,15 @@ export async function startOperation(req: OperationRequest): Promise<StartResult
   if (run.running) return { ok: false, status: 409, body: { error: "operation_already_running" } };
   try {
     const { id } = await api.startOperation(req);
-    setRun({ id, stage: "starting", counts: zeroCounts(), log: [], status: "running", running: true, logline: "" });
+    setRun({
+      id,
+      stage: "starting",
+      counts: zeroCounts(),
+      log: [],
+      status: "running",
+      running: true,
+      logline: "",
+    });
     watchOperation(id);
     return { ok: true };
   } catch (e) {
@@ -299,7 +340,8 @@ function watchOperation(id: string): void {
       if (type === "stage") {
         const stage = String(d["stage"] ?? "");
         setRun("stage", stage);
-        if (stage === "source_read" && typeof d["count"] === "number") setRun("counts", "read", d["count"] as number);
+        if (stage === "source_read" && typeof d["count"] === "number")
+          setRun("counts", "read", d["count"] as number);
         appendLog(`· ${stage}${d["count"] !== undefined ? ` (${d["count"]})` : ""}`);
       } else if (type === "match") {
         setRun("counts", "matched", (n) => n + 1);
@@ -343,5 +385,13 @@ export function summaryLine(s: OperationSummary): string {
 }
 
 export function clearRun(): void {
-  setRun({ id: "", stage: "", counts: zeroCounts(), log: [], status: "", running: false, logline: "" });
+  setRun({
+    id: "",
+    stage: "",
+    counts: zeroCounts(),
+    log: [],
+    status: "",
+    running: false,
+    logline: "",
+  });
 }

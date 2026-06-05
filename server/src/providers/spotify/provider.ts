@@ -57,7 +57,8 @@ export const spotifyProvider: MusicProvider = {
 
   async readSourceTracks(_ctx: UserCtx, target: ResolvedTarget): Promise<CanonicalTrack[]> {
     if (target.kind === "liked") return (await listSavedTracks()).map(spotifyToCanonical);
-    if (target.kind === "playlist") return (await listPlaylistTracks(target.id)).map(spotifyToCanonical);
+    if (target.kind === "playlist")
+      return (await listPlaylistTracks(target.id)).map(spotifyToCanonical);
     throw new Error("invalid_spotify_source_target");
   },
 
@@ -65,7 +66,8 @@ export const spotifyProvider: MusicProvider = {
     if (target.kind === "create") return [];
     // Spotify Liked Songs IS the saved set, so listSavedTracks is an accurate
     // skip set; the write id is the track id.
-    const tracks = target.kind === "playlist" ? await listPlaylistTracks(target.id) : await listSavedTracks();
+    const tracks =
+      target.kind === "playlist" ? await listPlaylistTracks(target.id) : await listSavedTracks();
     return tracks.map((t) => ({ canonical: spotifyToCanonical(t), destId: t.id }));
   },
 

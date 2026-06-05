@@ -76,9 +76,11 @@ The build/run is mostly hands-off; you're only pulled in at four credential boun
    `server/secrets/`, and set `APPLE_TEAM_ID`, `APPLE_KEY_ID`, and `APPLE_PRIVATE_KEY_PATH` in
    `server/.env`.
 4. **Start the UI**
+
    ```bash
    npm start        # serves the UI + API on http://127.0.0.1:8888
    ```
+
    Click **Connect** for Spotify and Apple Music in the auth panel. The auth flows open in popups; the
    local server captures the tokens and stores them in `server/data/tokens.json`.
 
@@ -88,6 +90,7 @@ The build/run is mostly hands-off; you're only pulled in at four credential boun
    > HTTPS-Only in Safari → Settings → Privacy → Advanced → "Use HTTPS" → "In Private Browsing only"
    > or "Off", or run the **Connect** flow in Chrome / Firefox / Brave. Once `tokens.json` is
    > populated, Safari is fine for normal use.
+
 5. **Verify**
    ```bash
    npm run doctor   # runs the same 10-check preflight as the UI's permissions button

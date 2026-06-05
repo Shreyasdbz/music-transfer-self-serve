@@ -56,14 +56,22 @@ export function insertOperation(row: {
        VALUES (@id, @created_at, NULL, @source, @destination, @source_target, @destination_target, @status, NULL)`,
     ).run(row);
   } catch (err) {
-    if ((err as { code?: string }).code?.startsWith("SQLITE_CONSTRAINT") && row.status === "running") {
+    if (
+      (err as { code?: string }).code?.startsWith("SQLITE_CONSTRAINT") &&
+      row.status === "running"
+    ) {
       throw new OperationRunningConflict();
     }
     throw err;
   }
 }
 
-export function finishOperation(id: string, status: OperationStatus, finishedAt: string, summary: unknown): void {
+export function finishOperation(
+  id: string,
+  status: OperationStatus,
+  finishedAt: string,
+  summary: unknown,
+): void {
   openLedger()
     .prepare(`UPDATE operations SET status = ?, finished_at = ?, summary = ? WHERE id = ?`)
     .run(status, finishedAt, JSON.stringify(summary), id);
@@ -80,19 +88,25 @@ export function insertOperationEvent(row: OperationEventRow): void {
 
 export function getOperation(id: string): OperationRow | undefined {
   return openLedger()
-    .prepare(`SELECT id, created_at, finished_at, source, destination, source_target, destination_target, status, summary FROM operations WHERE id = ?`)
+    .prepare(
+      `SELECT id, created_at, finished_at, source, destination, source_target, destination_target, status, summary FROM operations WHERE id = ?`,
+    )
     .get(id) as OperationRow | undefined;
 }
 
 export function getOperationEvents(id: string, afterSeq = 0): OperationEventRow[] {
   return openLedger()
-    .prepare(`SELECT operation_id, seq, ts, type, payload FROM operation_events WHERE operation_id = ? AND seq > ? ORDER BY seq`)
+    .prepare(
+      `SELECT operation_id, seq, ts, type, payload FROM operation_events WHERE operation_id = ? AND seq > ? ORDER BY seq`,
+    )
     .all(id, afterSeq) as OperationEventRow[];
 }
 
 export function listOperations(limit = 50): OperationRow[] {
   return openLedger()
-    .prepare(`SELECT id, created_at, finished_at, source, destination, source_target, destination_target, status, summary FROM operations ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+    .prepare(
+      `SELECT id, created_at, finished_at, source, destination, source_target, destination_target, status, summary FROM operations ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+    )
     .all(limit) as OperationRow[];
 }
 

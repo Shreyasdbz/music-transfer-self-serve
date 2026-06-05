@@ -111,9 +111,23 @@ export function findCatalogByName(platform: Platform, typed: string): NameCandid
   const target = normalizeName(typed);
   if (target.length === 0) return [];
   const rows = openLedger()
-    .prepare(`SELECT external_id, name, owner, track_count, url FROM catalog WHERE platform = ? AND kind = 'playlist'`)
-    .all(platform) as { external_id: string; name: string | null; owner: string | null; track_count: number | null; url: string | null }[];
+    .prepare(
+      `SELECT external_id, name, owner, track_count, url FROM catalog WHERE platform = ? AND kind = 'playlist'`,
+    )
+    .all(platform) as {
+    external_id: string;
+    name: string | null;
+    owner: string | null;
+    track_count: number | null;
+    url: string | null;
+  }[];
   return rows
     .filter((r) => r.name !== null && normalizeName(r.name) === target)
-    .map((r) => ({ id: r.external_id, name: r.name as string, owner: r.owner, track_count: r.track_count, url: r.url }));
+    .map((r) => ({
+      id: r.external_id,
+      name: r.name as string,
+      owner: r.owner,
+      track_count: r.track_count,
+      url: r.url,
+    }));
 }

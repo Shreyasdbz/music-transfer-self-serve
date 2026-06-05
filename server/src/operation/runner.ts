@@ -18,7 +18,12 @@ import {
   type OperationStatus,
 } from "../ledger/operationsStore.js";
 import { getOperationDeps } from "./deps.js";
-import type { OperationEventType, OperationSpec, OperationSummary, ResolvedTarget } from "./types.js";
+import type {
+  OperationEventType,
+  OperationSpec,
+  OperationSummary,
+  ResolvedTarget,
+} from "./types.js";
 
 export interface OperationHandle {
   readonly id: string;
@@ -58,7 +63,14 @@ export function startOperation(spec: OperationSpec): OperationHandle {
   emitters.set(id, emitter);
 
   let seq = 0;
-  const summary: OperationSummary = { read: 0, matched: 0, skipped: 0, written: 0, unmatched: 0, failed: 0 };
+  const summary: OperationSummary = {
+    read: 0,
+    matched: 0,
+    skipped: 0,
+    written: 0,
+    unmatched: 0,
+    failed: 0,
+  };
 
   const emit = (type: OperationEventType, payload: Record<string, unknown>): void => {
     seq += 1;
@@ -81,7 +93,10 @@ export function startOperation(spec: OperationSpec): OperationHandle {
       let destPlaylistId: string | undefined;
       if (spec.destinationTarget.kind === "playlist") destPlaylistId = spec.destinationTarget.id;
       else if (spec.destinationTarget.kind === "create") {
-        destPlaylistId = await deps.createDestination(spec.destination, spec.destinationTarget.name);
+        destPlaylistId = await deps.createDestination(
+          spec.destination,
+          spec.destinationTarget.name,
+        );
         emit("stage", { stage: "destination_created", id: destPlaylistId });
       }
 
@@ -149,7 +164,11 @@ export function startOperation(spec: OperationSpec): OperationHandle {
           // destination id. Adding `destId` to the set at STAGE time (below)
           // makes the second one skip here instead of double-appending.
           summary.skipped += 1;
-          emit("skip", { source_id: s.sourceId, dest_id: destId, reason: "already_staged_or_present" });
+          emit("skip", {
+            source_id: s.sourceId,
+            dest_id: destId,
+            reason: "already_staged_or_present",
+          });
           continue;
         }
         writtenDestIds.add(destId); // claim it now so a later dup is skipped
@@ -209,7 +228,12 @@ async function applyWrites(
     try {
       // One chunk = one client HTTP request (the client's batch cap matches
       // chunkSize, so it makes exactly one call). Atomic: all land or none.
-      await deps.writeTracks(spec.destination, spec.destinationTarget, destPlaylistId, chunk.map((x) => x.destId));
+      await deps.writeTracks(
+        spec.destination,
+        spec.destinationTarget,
+        destPlaylistId,
+        chunk.map((x) => x.destId),
+      );
       for (const x of chunk) {
         summary.written += 1;
         writtenDestIds.add(x.destId);
@@ -221,7 +245,15 @@ async function applyWrites(
       // a 404 on a stale cached id can be auto-revalidated. Prior chunks
       // already succeeded and are never re-touched.
       for (const x of chunk) {
-        await writeOneWithRevalidation(spec, destPlaylistId, x, deps, emit, summary, writtenDestIds);
+        await writeOneWithRevalidation(
+          spec,
+          destPlaylistId,
+          x,
+          deps,
+          emit,
+          summary,
+          writtenDestIds,
+        );
       }
     }
   }
@@ -251,7 +283,14 @@ async function writeOneWithRevalidation(
         const re = await deps.match(x.source, false, spec.destination);
         if (re.tier !== "unmatched" && re.destination) {
           const newId = re.destination.id;
-          emit("match", { source_id: x.source.sourceId, dest_id: newId, tier: re.tier, confidence: re.confidence, from_cache: false, revalidated: true });
+          emit("match", {
+            source_id: x.source.sourceId,
+            dest_id: newId,
+            tier: re.tier,
+            confidence: re.confidence,
+            from_cache: false,
+            revalidated: true,
+          });
           await deps.writeTracks(spec.destination, spec.destinationTarget, destPlaylistId, [newId]);
           summary.written += 1;
           writtenDestIds.add(newId);
@@ -263,6 +302,11 @@ async function writeOneWithRevalidation(
       }
     }
     summary.failed += 1;
-    emit("error", { source_id: x.source.sourceId, dest_id: x.destId, kind: "write_failed", status });
+    emit("error", {
+      source_id: x.source.sourceId,
+      dest_id: x.destId,
+      kind: "write_failed",
+      status,
+    });
   }
 }

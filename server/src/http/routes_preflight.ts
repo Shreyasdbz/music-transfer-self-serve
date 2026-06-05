@@ -10,7 +10,11 @@ import { err } from "./respond.js";
 import { sse } from "./sse.js";
 import { runPreflight, subscribePreflight, type CheckEvent } from "../preflight/runner.js";
 import { getGateState } from "../preflight/gate.js";
-import { getLatestPreflightRun, getPreflightRun, PreflightRunningConflict } from "../ledger/preflightStore.js";
+import {
+  getLatestPreflightRun,
+  getPreflightRun,
+  PreflightRunningConflict,
+} from "../ledger/preflightStore.js";
 import { log } from "../util/log.js";
 
 export function registerPreflightRoutes(app: Hono): void {

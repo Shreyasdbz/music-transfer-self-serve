@@ -2,7 +2,13 @@
 // for text/surface pairs in BOTH themes and ≥3:1 for the focus ring (1.4.11).
 // A regression to a non-compliant palette fails CI.
 
-import { contrastRatio, lightColors, darkColors, type ColorTokens, type ThemeName } from "./tokens.js";
+import {
+  contrastRatio,
+  lightColors,
+  darkColors,
+  type ColorTokens,
+  type ThemeName,
+} from "./tokens.js";
 
 function assert(cond: unknown, msg: string): void {
   if (!cond) {
@@ -35,8 +41,14 @@ function checkTheme(name: ThemeName, c: ColorTokens): void {
     assert(r >= AA, `${name}: ${label} = ${r.toFixed(2)}:1 (≥${AA})`);
   }
   // Focus ring against both backgrounds (UI component contrast).
-  assert(contrastRatio(c.focusRing, c.bg) >= UI, `${name}: focusRing on bg = ${contrastRatio(c.focusRing, c.bg).toFixed(2)}:1 (≥${UI})`);
-  assert(contrastRatio(c.focusRing, c.surface) >= UI, `${name}: focusRing on surface = ${contrastRatio(c.focusRing, c.surface).toFixed(2)}:1 (≥${UI})`);
+  assert(
+    contrastRatio(c.focusRing, c.bg) >= UI,
+    `${name}: focusRing on bg = ${contrastRatio(c.focusRing, c.bg).toFixed(2)}:1 (≥${UI})`,
+  );
+  assert(
+    contrastRatio(c.focusRing, c.surface) >= UI,
+    `${name}: focusRing on surface = ${contrastRatio(c.focusRing, c.surface).toFixed(2)}:1 (≥${UI})`,
+  );
 }
 
 checkTheme("light", lightColors);

@@ -22,7 +22,12 @@ export const OWNER_ID = "__owner__";
 // `secure:true` would make access-controlled HTTP/loopback instances
 // un-loginable — browsers silently drop a Secure cookie on an http:// origin.
 const COOKIE_SECURE = PUBLIC_ORIGIN.startsWith("https://");
-const COOKIE_OPTS = { httpOnly: true, secure: COOKIE_SECURE, sameSite: "Strict", path: "/" } as const;
+const COOKIE_OPTS = {
+  httpOnly: true,
+  secure: COOKIE_SECURE,
+  sameSite: "Strict",
+  path: "/",
+} as const;
 
 interface Session {
   userId: string;
@@ -39,7 +44,9 @@ function sign(payload: string): string {
 
 /** `<base64url(JSON{userId,iat})>.<base64url(HMAC)>` */
 export function makeSessionCookie(userId: string): string {
-  const payload = Buffer.from(JSON.stringify({ userId, iat: Date.now() } satisfies Session)).toString("base64url");
+  const payload = Buffer.from(
+    JSON.stringify({ userId, iat: Date.now() } satisfies Session),
+  ).toString("base64url");
   return `${payload}.${sign(payload)}`;
 }
 

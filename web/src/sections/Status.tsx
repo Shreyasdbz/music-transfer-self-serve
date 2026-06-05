@@ -19,7 +19,14 @@ export function Status(): JSX.Element {
         <Card>
           <div class="spread">
             <span class="grow t-note">Transfer status</span>
-            <Show when={run.running} fallback={<Show when={run.status}><StatusPill tone={tone(run.status)}>{run.status}</StatusPill></Show>}>
+            <Show
+              when={run.running}
+              fallback={
+                <Show when={run.status}>
+                  <StatusPill tone={tone(run.status)}>{run.status}</StatusPill>
+                </Show>
+              }
+            >
               <StatusPill tone="general">Running</StatusPill>
             </Show>
             <Button size="sm" disabled={run.running} onClick={clearRun}>
@@ -33,8 +40,8 @@ export function Status(): JSX.Element {
             </p>
           </Show>
           <p class="run-counts t-subtle" aria-live="polite">
-            read {run.counts.read} · matched {run.counts.matched} · written {run.counts.written} · skipped{" "}
-            {run.counts.skipped} · unmatched {run.counts.unmatched}
+            read {run.counts.read} · matched {run.counts.matched} · written {run.counts.written} ·
+            skipped {run.counts.skipped} · unmatched {run.counts.unmatched}
             {run.counts.failed ? ` · failed ${run.counts.failed}` : ""}
           </p>
 

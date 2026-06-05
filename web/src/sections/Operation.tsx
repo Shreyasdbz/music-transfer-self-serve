@@ -1,6 +1,24 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  onCleanup,
+  onMount,
+  Show,
+  type JSX,
+} from "solid-js";
 import { Button, Card, Dropdown } from "../components/index.js";
-import { catalog, gate, prefill, providers, refreshGate, run, startOperation, setToast } from "../store.js";
+import {
+  catalog,
+  gate,
+  prefill,
+  providers,
+  refreshGate,
+  run,
+  startOperation,
+  setToast,
+} from "../store.js";
 import type { TargetInput } from "../api/client.js";
 
 type Side = "source" | "destination";
@@ -32,7 +50,8 @@ export function Operation(): JSX.Element {
   createEffect(() => {
     const list = usableProviders();
     if (list.length && !srcProvider()) setSrcProvider(list[0]!.id);
-    if (list.length > 1 && !dstProvider()) setDstProvider(list.find((p) => p.id !== list[0]!.id)!.id);
+    if (list.length > 1 && !dstProvider())
+      setDstProvider(list.find((p) => p.id !== list[0]!.id)!.id);
   });
 
   // Catalog "Transfer" pre-fills the source side.
@@ -58,7 +77,9 @@ export function Operation(): JSX.Element {
     const opts: { value: string; label: string }[] = [];
     if (p?.likedKind === "liked") opts.push({ value: "liked", label: "★ Liked songs" });
     if (p?.likedKind === "favorites") opts.push({ value: "favorites", label: "★ Favorite songs" });
-    for (const row of (catalog()?.rows ?? []).filter((r) => r.platform === providerId && r.kind === "playlist")) {
+    for (const row of (catalog()?.rows ?? []).filter(
+      (r) => r.platform === providerId && r.kind === "playlist",
+    )) {
       opts.push({ value: `playlist:${row.external_id}`, label: row.name ?? row.external_id });
     }
     if (isDest) opts.push({ value: "create", label: "＋ Create new…" });
@@ -76,7 +97,8 @@ export function Operation(): JSX.Element {
   async function start(forceCreate = false): Promise<void> {
     const src = buildTarget(srcTarget(), "");
     let dst = buildTarget(dstTarget(), createName());
-    if (forceCreate && dstTarget() === "create") dst = { query: createName().trim(), forceCreate: true };
+    if (forceCreate && dstTarget() === "create")
+      dst = { query: createName().trim(), forceCreate: true };
     if (!src || !dst) {
       setToast("Choose a source and a destination.");
       return;
@@ -90,8 +112,13 @@ export function Operation(): JSX.Element {
     });
     if (res.ok) return;
     if (res.status === 422) {
-      const b = res.body as { side?: Side; error?: string; candidates?: { id: string; name: string }[] };
-      if (b.error === "ambiguous_name" && b.candidates) setDisambig({ side: b.side ?? "source", candidates: b.candidates });
+      const b = res.body as {
+        side?: Side;
+        error?: string;
+        candidates?: { id: string; name: string }[];
+      };
+      if (b.error === "ambiguous_name" && b.candidates)
+        setDisambig({ side: b.side ?? "source", candidates: b.candidates });
       else setToast(`Could not resolve ${b.side ?? "target"}: ${b.error}`);
     } else if (res.status === 412) {
       setToast("Run the permissions check first.");
@@ -114,7 +141,9 @@ export function Operation(): JSX.Element {
       <h2 id="op-h" class="section-title t-subheading">
         Operation
       </h2>
-      <p class="section-sub t-caption">Pick where to transfer from and to, then start. Additive only — nothing is removed.</p>
+      <p class="section-sub t-caption">
+        Pick where to transfer from and to, then start. Additive only — nothing is removed.
+      </p>
       <Card>
         <div class="op-grid" role="group" aria-label="Transfer">
           {/* Row labels (not bound to a single field — the aria-labels carry the
@@ -168,11 +197,19 @@ export function Operation(): JSX.Element {
         </div>
 
         <div style={{ "margin-top": "var(--space-lg)" }}>
-          <Button variant="tier2" class="btn-block" disabled={!canStart()} onClick={() => void start()}>
+          <Button
+            variant="tier2"
+            class="btn-block"
+            disabled={!canStart()}
+            onClick={() => void start()}
+          >
             {run.running ? "Transferring…" : "Start transfer"}
           </Button>
           <Show when={!gate().open}>
-            <p class="t-subtle" style={{ color: "var(--color-text-muted)", "margin-top": "var(--space-sm)" }}>
+            <p
+              class="t-subtle"
+              style={{ color: "var(--color-text-muted)", "margin-top": "var(--space-sm)" }}
+            >
               Run the permissions check above to enable transfers.
             </p>
           </Show>
@@ -185,8 +222,11 @@ export function Operation(): JSX.Element {
           const previouslyFocused = document.activeElement as HTMLElement | null;
           onMount(() => modalEl.querySelector<HTMLElement>("button")?.focus());
           onCleanup(() => previouslyFocused?.focus()); // return focus on close
-          const focusables = (): HTMLElement[] =>
-            [...modalEl.querySelectorAll<HTMLElement>("button:not([disabled]), input, select, [href]")];
+          const focusables = (): HTMLElement[] => [
+            ...modalEl.querySelectorAll<HTMLElement>(
+              "button:not([disabled]), input, select, [href]",
+            ),
+          ];
           const onKeyDown = (e: KeyboardEvent): void => {
             if (e.key === "Escape") {
               e.preventDefault();
@@ -214,12 +254,21 @@ export function Operation(): JSX.Element {
                 if (e.target === e.currentTarget) setDisambig(undefined);
               }}
             >
-              <div class="modal" role="dialog" aria-modal="true" aria-label="Choose a playlist" tabindex="-1" ref={modalEl} onKeyDown={onKeyDown}>
+              <div
+                class="modal"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Choose a playlist"
+                tabindex="-1"
+                ref={modalEl}
+                onKeyDown={onKeyDown}
+              >
                 <h3 class="t-headline" style={{ margin: 0 }}>
                   Multiple {d().side} playlists match
                 </h3>
                 <p class="t-subtle" style={{ color: "var(--color-text-muted)" }}>
-                  Pick the one you meant{d().side === "destination" ? ", or create a new one." : "."}
+                  Pick the one you meant
+                  {d().side === "destination" ? ", or create a new one." : "."}
                 </p>
                 <ul class="modal-list">
                   <For each={d().candidates}>

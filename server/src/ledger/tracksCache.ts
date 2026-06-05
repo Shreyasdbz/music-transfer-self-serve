@@ -24,7 +24,8 @@ export interface CachedTrack {
   readonly updated_at: string;
 }
 
-const IDENTITY_COLS = "identity_key, isrc, norm_title, norm_artist, duration_ms, match_tier, confidence, updated_at";
+const IDENTITY_COLS =
+  "identity_key, isrc, norm_title, norm_artist, duration_ms, match_tier, confidence, updated_at";
 
 /** The write-id kind used for matching (Spotify track id / Apple catalog id /
  * YouTube video id). Apple's separate library id is stored as 'library' and is
@@ -34,9 +35,9 @@ const DEFAULT_KIND = "default";
 /** Fetch the cached identity/match row by key. Returns undefined on miss. */
 export function getCachedTrack(identityKey: string): CachedTrack | undefined {
   const db = openLedger();
-  const row = db.prepare(`SELECT ${IDENTITY_COLS} FROM tracks WHERE identity_key = ?`).get(identityKey) as
-    | CachedTrack
-    | undefined;
+  const row = db
+    .prepare(`SELECT ${IDENTITY_COLS} FROM tracks WHERE identity_key = ?`)
+    .get(identityKey) as CachedTrack | undefined;
   return row ?? undefined;
 }
 

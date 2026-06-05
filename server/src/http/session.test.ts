@@ -12,7 +12,8 @@ function assert(c: unknown, m: string): void {
   } else process.stdout.write(`PASS  ${m}\n`);
 }
 
-const { makeSessionCookie, verifySessionCookie, accessControlEnabled, OWNER_ID } = await import("./session.js");
+const { makeSessionCookie, verifySessionCookie, accessControlEnabled, OWNER_ID } =
+  await import("./session.js");
 
 // accessControlEnabled reflects the env token.
 assert(accessControlEnabled() === true, "accessControlEnabled true when INSTANCE_ACCESS_TOKEN set");
@@ -31,12 +32,18 @@ assert(verifySessionCookie(forged) === null, "tampered payload rejected");
 
 // Tamper with the MAC (same length) → rejected.
 const badMacChar = mac!.charAt(0) === "A" ? "B" : "A";
-assert(verifySessionCookie(`${payload}.${badMacChar}${mac!.slice(1)}`) === null, "tampered mac rejected");
+assert(
+  verifySessionCookie(`${payload}.${badMacChar}${mac!.slice(1)}`) === null,
+  "tampered mac rejected",
+);
 
 // A cookie signed with a different secret must NOT verify under our secret.
 // Re-import the module fresh in a child env is awkward; instead forge a cookie
 // whose MAC is a plausible-but-wrong base64url string of the right length.
-assert(verifySessionCookie(`${payload}.${"A".repeat(mac!.length)}`) === null, "wrong-secret-shaped mac rejected");
+assert(
+  verifySessionCookie(`${payload}.${"A".repeat(mac!.length)}`) === null,
+  "wrong-secret-shaped mac rejected",
+);
 
 // Empty / malformed inputs never throw and return null.
 assert(verifySessionCookie(undefined) === null, "undefined → null");
@@ -45,7 +52,10 @@ assert(verifySessionCookie("no-dot-here") === null, "no separator → null");
 assert(verifySessionCookie(".onlymac") === null, "empty payload → null");
 
 // The payload is secretless: it decodes to exactly { userId, iat }.
-const decoded = JSON.parse(Buffer.from(payload!, "base64url").toString("utf8")) as Record<string, unknown>;
+const decoded = JSON.parse(Buffer.from(payload!, "base64url").toString("utf8")) as Record<
+  string,
+  unknown
+>;
 assert(
   Object.keys(decoded).sort().join(",") === "iat,userId",
   "cookie payload carries only { userId, iat } — no secret",

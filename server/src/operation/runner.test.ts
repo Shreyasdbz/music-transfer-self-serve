@@ -4,7 +4,11 @@
 import { existsSync, copyFileSync, unlinkSync } from "node:fs";
 import { LEDGER_PATH } from "../config.js";
 import { closeLedger, openLedger } from "../ledger/db.js";
-import { getOperation, getOperationEvents, OperationRunningConflict } from "../ledger/operationsStore.js";
+import {
+  getOperation,
+  getOperationEvents,
+  OperationRunningConflict,
+} from "../ledger/operationsStore.js";
 import { __setOperationDeps, __resetOperationDeps, type DestTrack } from "./deps.js";
 import { startOperation } from "./runner.js";
 import { registerBuiltInProviders } from "../providers/index.js";
@@ -24,16 +28,37 @@ let restored = false;
 function restore(): void {
   if (restored) return;
   restored = true;
-  try { closeLedger(); } catch { /* */ }
-  if (_had && existsSync(SNAP)) { copyFileSync(SNAP, LEDGER_PATH); try { unlinkSync(SNAP); } catch { /* */ } }
-  else if (!_had && existsSync(LEDGER_PATH)) { try { unlinkSync(LEDGER_PATH); } catch { /* */ } }
+  try {
+    closeLedger();
+  } catch {
+    /* */
+  }
+  if (_had && existsSync(SNAP)) {
+    copyFileSync(SNAP, LEDGER_PATH);
+    try {
+      unlinkSync(SNAP);
+    } catch {
+      /* */
+    }
+  } else if (!_had && existsSync(LEDGER_PATH)) {
+    try {
+      unlinkSync(LEDGER_PATH);
+    } catch {
+      /* */
+    }
+  }
 }
 process.on("exit", restore);
-process.on("SIGINT", () => { restore(); process.exit(130); });
+process.on("SIGINT", () => {
+  restore();
+  process.exit(130);
+});
 
 function assert(c: unknown, m: string): void {
-  if (!c) { process.stderr.write(`FAIL  ${m}\n`); process.exitCode = 1; }
-  else process.stdout.write(`PASS  ${m}\n`);
+  if (!c) {
+    process.stderr.write(`FAIL  ${m}\n`);
+    process.exitCode = 1;
+  } else process.stdout.write(`PASS  ${m}\n`);
 }
 
 const db = openLedger();
@@ -43,16 +68,53 @@ db.prepare("DELETE FROM operations").run();
 // ── Fixtures ──────────────────────────────────────────────────────────────
 
 function srcTrack(n: number, isrc: string): CanonicalTrack {
-  return { isrc, title: `Song ${n}`, primaryArtist: `Artist ${n}`, artists: [`Artist ${n}`], album: "Alb", durationMs: 200000, explicit: false, source: "spotify", sourceId: `sp${n}` };
+  return {
+    isrc,
+    title: `Song ${n}`,
+    primaryArtist: `Artist ${n}`,
+    artists: [`Artist ${n}`],
+    album: "Alb",
+    durationMs: 200000,
+    explicit: false,
+    source: "spotify",
+    sourceId: `sp${n}`,
+  };
 }
 function matchTo(destId: string, isrc: string): MatchResult {
-  return { tier: "isrc", confidence: 100, fromCache: false, rejected: undefined, destination: { id: destId, isrc, canonical: { isrc, title: "x", primaryArtist: "y", artists: ["y"], album: undefined, durationMs: undefined, explicit: undefined, source: "apple", sourceId: destId } } };
+  return {
+    tier: "isrc",
+    confidence: 100,
+    fromCache: false,
+    rejected: undefined,
+    destination: {
+      id: destId,
+      isrc,
+      canonical: {
+        isrc,
+        title: "x",
+        primaryArtist: "y",
+        artists: ["y"],
+        album: undefined,
+        durationMs: undefined,
+        explicit: undefined,
+        source: "apple",
+        sourceId: destId,
+      },
+    },
+  };
 }
 // Each test uses a DISTINCT destination name → a distinct Operation tuple, so
 // the §12.5 resume-union (which intentionally skips ids written by prior runs
 // of the SAME tuple) doesn't bleed across independent test cases.
 function spec(name: string, over: Partial<OperationSpec> = {}): OperationSpec {
-  return { source: "spotify", destination: "apple", sourceTarget: { kind: "liked" }, destinationTarget: { kind: "create", name }, rematch: false, ...over };
+  return {
+    source: "spotify",
+    destination: "apple",
+    sourceTarget: { kind: "liked" },
+    destinationTarget: { kind: "create", name },
+    rematch: false,
+    ...over,
+  };
 }
 
 // A configurable fake dep set per test.
@@ -72,14 +134,31 @@ function fakeDeps(opts: {
     createDestination: async () => opts.createdId ?? "p.NEW",
     match: async (s: CanonicalTrack) => {
       const d = opts.matchMap?.[s.sourceId];
-      if (d === undefined || d === "") return { tier: "unmatched", confidence: 0, fromCache: false, rejected: undefined, destination: undefined } as MatchResult;
+      if (d === undefined || d === "")
+        return {
+          tier: "unmatched",
+          confidence: 0,
+          fromCache: false,
+          rejected: undefined,
+          destination: undefined,
+        } as MatchResult;
       return matchTo(d, s.isrc ?? "X");
     },
-    deleteCache: (s: CanonicalTrack) => { opts.rematchSeen?.add(s.sourceId); },
-    writeTracks: async (_dst: unknown, _t: unknown, _pid: string | undefined, destIds: string[]) => {
+    deleteCache: (s: CanonicalTrack) => {
+      opts.rematchSeen?.add(s.sourceId);
+    },
+    writeTracks: async (
+      _dst: unknown,
+      _t: unknown,
+      _pid: string | undefined,
+      destIds: string[],
+    ) => {
       // Per-track fallback calls this with a single id; batch with many.
       for (const id of destIds) {
-        if (opts.fail404DestIds?.has(id)) { const { HttpError } = await import("../util/http.js"); throw new HttpError(404, "gone", "x"); }
+        if (opts.fail404DestIds?.has(id)) {
+          const { HttpError } = await import("../util/http.js");
+          throw new HttpError(404, "gone", "x");
+        }
         if (opts.failDestIds?.has(id)) throw new Error("write boom");
       }
       opts.writes.push(destIds);
@@ -91,19 +170,30 @@ function fakeDeps(opts: {
 {
   const writes: string[][] = [];
   // 3 source tracks; one (sp2) already present in D by identity key.
-  const present: DestTrack = { canonical: { ...srcTrack(2, "ISRC0002"), source: "apple", sourceId: "ap2" }, destId: "ap2" };
-  __setOperationDeps(fakeDeps({
-    source: [srcTrack(1, "ISRC0001"), srcTrack(2, "ISRC0002"), srcTrack(3, "ISRC0003")],
-    dest: [present],
-    matchMap: { sp1: "ap1", sp3: "ap3" },
-    writes,
-  }));
+  const present: DestTrack = {
+    canonical: { ...srcTrack(2, "ISRC0002"), source: "apple", sourceId: "ap2" },
+    destId: "ap2",
+  };
+  __setOperationDeps(
+    fakeDeps({
+      source: [srcTrack(1, "ISRC0001"), srcTrack(2, "ISRC0002"), srcTrack(3, "ISRC0003")],
+      dest: [present],
+      matchMap: { sp1: "ap1", sp3: "ap3" },
+      writes,
+    }),
+  );
   const h = startOperation(spec("AC1 dest"));
   const status = await h.done;
   const op = getOperation(h.id);
   assert(status === "succeeded", `AC1: status succeeded (got ${status})`);
-  assert(JSON.parse(op!.summary!).written === 2, `AC1: wrote 2 missing (got ${JSON.parse(op!.summary!).written})`);
-  assert(JSON.parse(op!.summary!).skipped === 1, `AC1: skipped 1 already-present (got ${JSON.parse(op!.summary!).skipped})`);
+  assert(
+    JSON.parse(op!.summary!).written === 2,
+    `AC1: wrote 2 missing (got ${JSON.parse(op!.summary!).written})`,
+  );
+  assert(
+    JSON.parse(op!.summary!).skipped === 1,
+    `AC1: skipped 1 already-present (got ${JSON.parse(op!.summary!).skipped})`,
+  );
   assert(writes.flat().sort().join(",") === "ap1,ap3", `AC1: wrote ap1,ap3 (got ${writes.flat()})`);
   __resetOperationDeps();
 }
@@ -112,11 +202,24 @@ function fakeDeps(opts: {
 {
   const writes: string[][] = [];
   // D already contains all source tracks by identity.
-  const dest: DestTrack[] = [1, 2, 3].map((n) => ({ canonical: { ...srcTrack(n, `ISRC000${n}`), source: "apple", sourceId: `ap${n}` }, destId: `ap${n}` }));
-  __setOperationDeps(fakeDeps({ source: [1, 2, 3].map((n) => srcTrack(n, `ISRC000${n}`)), dest, matchMap: { sp1: "ap1", sp2: "ap2", sp3: "ap3" }, writes }));
+  const dest: DestTrack[] = [1, 2, 3].map((n) => ({
+    canonical: { ...srcTrack(n, `ISRC000${n}`), source: "apple", sourceId: `ap${n}` },
+    destId: `ap${n}`,
+  }));
+  __setOperationDeps(
+    fakeDeps({
+      source: [1, 2, 3].map((n) => srcTrack(n, `ISRC000${n}`)),
+      dest,
+      matchMap: { sp1: "ap1", sp2: "ap2", sp3: "ap3" },
+      writes,
+    }),
+  );
   const h = startOperation(spec("AC2 dest"));
   await h.done;
-  assert(writes.length === 0, `AC2: idempotent re-run wrote nothing (got ${writes.flat().length} writes)`);
+  assert(
+    writes.length === 0,
+    `AC2: idempotent re-run wrote nothing (got ${writes.flat().length} writes)`,
+  );
   assert(JSON.parse(getOperation(h.id)!.summary!).written === 0, "AC2: summary written=0");
   __resetOperationDeps();
 }
@@ -124,12 +227,14 @@ function fakeDeps(opts: {
 // ── AC #3: mid-run single-track failure recorded, operation continues ─────
 {
   const writes: string[][] = [];
-  __setOperationDeps(fakeDeps({
-    source: [srcTrack(1, "ISRC0001"), srcTrack(2, "ISRC0002"), srcTrack(3, "ISRC0003")],
-    matchMap: { sp1: "ap1", sp2: "apBAD", sp3: "ap3" },
-    writes,
-    failDestIds: new Set(["apBAD"]),
-  }));
+  __setOperationDeps(
+    fakeDeps({
+      source: [srcTrack(1, "ISRC0001"), srcTrack(2, "ISRC0002"), srcTrack(3, "ISRC0003")],
+      matchMap: { sp1: "ap1", sp2: "apBAD", sp3: "ap3" },
+      writes,
+      failDestIds: new Set(["apBAD"]),
+    }),
+  );
   const h = startOperation(spec("AC3 dest"));
   const status = await h.done;
   const sum = JSON.parse(getOperation(h.id)!.summary!);
@@ -143,13 +248,18 @@ function fakeDeps(opts: {
 {
   const writes: string[][] = [];
   const rematchSeen = new Set<string>();
-  __setOperationDeps(fakeDeps({ source: [srcTrack(1, "ISRC0001")], matchMap: { sp1: "ap1" }, writes, rematchSeen }));
+  __setOperationDeps(
+    fakeDeps({ source: [srcTrack(1, "ISRC0001")], matchMap: { sp1: "ap1" }, writes, rematchSeen }),
+  );
   const h = startOperation(spec("AC5 dest", { rematch: true }));
   await h.done;
   assert(rematchSeen.has("sp1"), "AC5: rematch called deleteCache for source item");
   const events = getOperationEvents(h.id);
   const matchEvt = events.find((e) => e.type === "match");
-  assert(matchEvt && JSON.parse(matchEvt.payload!).from_cache === false, "AC5: match event from_cache=false");
+  assert(
+    matchEvt && JSON.parse(matchEvt.payload!).from_cache === false,
+    "AC5: match event from_cache=false",
+  );
   __resetOperationDeps();
 }
 
@@ -168,17 +278,30 @@ function fakeDeps(opts: {
     },
     deleteCache: () => {},
     writeTracks: async (_d: unknown, _t: unknown, _p: string | undefined, ids: string[]) => {
-      for (const id of ids) { if (id === "ap404") { const { HttpError } = await import("../util/http.js"); throw new HttpError(404, "gone", "x"); } }
+      for (const id of ids) {
+        if (id === "ap404") {
+          const { HttpError } = await import("../util/http.js");
+          throw new HttpError(404, "gone", "x");
+        }
+      }
       writes.push(ids);
     },
   });
   const h = startOperation(spec("AC7 dest"));
   await h.done;
-  assert(writes.flat().includes("apOK"), `AC7: revalidated write landed apOK (got ${writes.flat()})`);
+  assert(
+    writes.flat().includes("apOK"),
+    `AC7: revalidated write landed apOK (got ${writes.flat()})`,
+  );
   const events = getOperationEvents(h.id);
-  const reval = events.find((e) => e.type === "match" && JSON.parse(e.payload ?? "{}").revalidated === true);
+  const reval = events.find(
+    (e) => e.type === "match" && JSON.parse(e.payload ?? "{}").revalidated === true,
+  );
   assert(reval !== undefined, "AC7: match event with revalidated:true");
-  assert(JSON.parse(getOperation(h.id)!.summary!).written === 1, "AC7: written=1 after revalidation");
+  assert(
+    JSON.parse(getOperation(h.id)!.summary!).written === 1,
+    "AC7: written=1 after revalidation",
+  );
   __resetOperationDeps();
 }
 
@@ -186,12 +309,16 @@ function fakeDeps(opts: {
 {
   // Leave a running row by inserting directly, then a startOperation must 409.
   const now = new Date().toISOString();
-  db.prepare(`INSERT INTO operations (id, created_at, finished_at, source, destination, source_target, destination_target, status, summary) VALUES ('op-running', ?, NULL, 'spotify','apple','{}','{}','running', NULL)`).run(now);
+  db.prepare(
+    `INSERT INTO operations (id, created_at, finished_at, source, destination, source_target, destination_target, status, summary) VALUES ('op-running', ?, NULL, 'spotify','apple','{}','{}','running', NULL)`,
+  ).run(now);
   let conflict = false;
   try {
     __setOperationDeps(fakeDeps({ source: [], writes: [] }));
     startOperation(spec("conflict dest"));
-  } catch (e) { conflict = e instanceof OperationRunningConflict; }
+  } catch (e) {
+    conflict = e instanceof OperationRunningConflict;
+  }
   assert(conflict, "one-running: second startOperation → OperationRunningConflict");
   db.prepare("DELETE FROM operations WHERE id='op-running'").run();
   __resetOperationDeps();
@@ -200,13 +327,22 @@ function fakeDeps(opts: {
 // ── SSE replay surface: events persisted by seq, getOperationEvents(after) ─
 {
   const writes: string[][] = [];
-  __setOperationDeps(fakeDeps({ source: [srcTrack(1, "ISRC0001"), srcTrack(2, "ISRC0002")], matchMap: { sp1: "ap1", sp2: "ap2" }, writes }));
+  __setOperationDeps(
+    fakeDeps({
+      source: [srcTrack(1, "ISRC0001"), srcTrack(2, "ISRC0002")],
+      matchMap: { sp1: "ap1", sp2: "ap2" },
+      writes,
+    }),
+  );
   const h = startOperation(spec("AC6 dest"));
   await h.done;
   const all = getOperationEvents(h.id);
   const after = getOperationEvents(h.id, all[2]!.seq);
   assert(all.length > 3, "AC6: events persisted with monotonic seq");
-  assert(after.every((e) => e.seq > all[2]!.seq), "AC6: getOperationEvents(afterSeq) replays only seq > N");
+  assert(
+    after.every((e) => e.seq > all[2]!.seq),
+    "AC6: getOperationEvents(afterSeq) replays only seq > N",
+  );
   assert(all[all.length - 1]!.type === "done", "AC6: terminal event is 'done'");
   __resetOperationDeps();
 }
@@ -216,13 +352,28 @@ function fakeDeps(opts: {
   const writes: string[][] = [];
   // sp1 and sp2 are DIFFERENT recordings (different ISRC → different identity
   // keys, so neither is skipped by dKeys) but both resolve to the SAME dest id.
-  __setOperationDeps(fakeDeps({ source: [srcTrack(1, "ISRC0001"), srcTrack(2, "ISRC0002")], matchMap: { sp1: "apSAME", sp2: "apSAME" }, writes }));
+  __setOperationDeps(
+    fakeDeps({
+      source: [srcTrack(1, "ISRC0001"), srcTrack(2, "ISRC0002")],
+      matchMap: { sp1: "apSAME", sp2: "apSAME" },
+      writes,
+    }),
+  );
   const h = startOperation(spec("DUP1 dest"));
   await h.done;
   const sum = JSON.parse(getOperation(h.id)!.summary!);
-  assert(writes.flat().filter((x) => x === "apSAME").length === 1, `DUP1: dest id written exactly once (got ${writes.flat()})`);
-  assert(sum.written === 1 && sum.skipped === 1, `DUP1: written 1, skipped 1 (got written=${sum.written} skipped=${sum.skipped})`);
-  const skipEvt = getOperationEvents(h.id).find((e) => e.type === "skip" && JSON.parse(e.payload ?? "{}").reason === "already_staged_or_present");
+  assert(
+    writes.flat().filter((x) => x === "apSAME").length === 1,
+    `DUP1: dest id written exactly once (got ${writes.flat()})`,
+  );
+  assert(
+    sum.written === 1 && sum.skipped === 1,
+    `DUP1: written 1, skipped 1 (got written=${sum.written} skipped=${sum.skipped})`,
+  );
+  const skipEvt = getOperationEvents(h.id).find(
+    (e) =>
+      e.type === "skip" && JSON.parse(e.payload ?? "{}").reason === "already_staged_or_present",
+  );
   assert(skipEvt !== undefined, "DUP1: dedup skip event emitted");
   __resetOperationDeps();
 }
@@ -238,10 +389,15 @@ function fakeDeps(opts: {
 {
   const writes: string[][] = [];
   __setOperationDeps({
-    readSource: async () => [srcTrack(1, "ISRC0001"), srcTrack(2, "ISRC0002"), srcTrack(3, "ISRC0003")],
+    readSource: async () => [
+      srcTrack(1, "ISRC0001"),
+      srcTrack(2, "ISRC0002"),
+      srcTrack(3, "ISRC0003"),
+    ],
     readDestination: async () => [],
     createDestination: async () => "p.NEW",
-    match: async (s: CanonicalTrack) => matchTo({ sp1: "apA", sp2: "apB", sp3: "apC" }[s.sourceId]!, s.isrc ?? "X"),
+    match: async (s: CanonicalTrack) =>
+      matchTo({ sp1: "apA", sp2: "apB", sp3: "apC" }[s.sourceId]!, s.isrc ?? "X"),
     deleteCache: () => {},
     writeTracks: async (_d: unknown, _t: unknown, _p: string | undefined, ids: string[]) => {
       if (ids.length > 1) throw new Error("batch boom"); // the whole-chunk call fails → per-track fallback
@@ -251,7 +407,10 @@ function fakeDeps(opts: {
   const h = startOperation(spec("DUP2 dest"));
   await h.done;
   const flat = writes.flat();
-  assert(flat.length === 3 && new Set(flat).size === 3, `DUP2: each track written exactly once after batch failure (got ${flat})`);
+  assert(
+    flat.length === 3 && new Set(flat).size === 3,
+    `DUP2: each track written exactly once after batch failure (got ${flat})`,
+  );
   assert(JSON.parse(getOperation(h.id)!.summary!).written === 3, "DUP2: written=3, no duplicates");
   __resetOperationDeps();
 }
@@ -263,18 +422,28 @@ function fakeDeps(opts: {
 {
   const writes: string[][] = [];
   // First run (create) writes apX.
-  __setOperationDeps(fakeDeps({ source: [srcTrack(9, "ISRC0009")], matchMap: { sp9: "apX" }, writes }));
+  __setOperationDeps(
+    fakeDeps({ source: [srcTrack(9, "ISRC0009")], matchMap: { sp9: "apX" }, writes }),
+  );
   const r1 = startOperation(spec("DUP3 dest"));
   await r1.done;
   assert(writes.flat().includes("apX"), "DUP3 setup: first create run wrote apX");
   writes.length = 0;
   // Second run, SAME create tuple — must re-write apX into the new playlist,
   // NOT skip it via the resume union.
-  __setOperationDeps(fakeDeps({ source: [srcTrack(9, "ISRC0009")], matchMap: { sp9: "apX" }, writes }));
+  __setOperationDeps(
+    fakeDeps({ source: [srcTrack(9, "ISRC0009")], matchMap: { sp9: "apX" }, writes }),
+  );
   const r2 = startOperation(spec("DUP3 dest"));
   await r2.done;
-  assert(writes.flat().includes("apX"), `DUP3: create re-run fills the new playlist (resume union not applied for create) — wrote ${writes.flat()}`);
-  assert(JSON.parse(getOperation(r2.id)!.summary!).written === 1, "DUP3: create re-run written=1 (no empty orphan)");
+  assert(
+    writes.flat().includes("apX"),
+    `DUP3: create re-run fills the new playlist (resume union not applied for create) — wrote ${writes.flat()}`,
+  );
+  assert(
+    JSON.parse(getOperation(r2.id)!.summary!).written === 1,
+    "DUP3: create re-run written=1 (no empty orphan)",
+  );
   __resetOperationDeps();
 }
 

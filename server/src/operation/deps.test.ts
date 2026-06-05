@@ -9,7 +9,13 @@
 
 import { registerProvider, __clearRegistry } from "../providers/registry.js";
 import { getOperationDeps, __resetOperationDeps } from "./deps.js";
-import { OWNER, type DestTrack, type MusicProvider, type ProviderCapabilities, type UserCtx } from "../providers/types.js";
+import {
+  OWNER,
+  type DestTrack,
+  type MusicProvider,
+  type ProviderCapabilities,
+  type UserCtx,
+} from "../providers/types.js";
 import type { CanonicalTrack } from "../match/identity.js";
 import type { ResolvedTarget } from "./types.js";
 
@@ -61,7 +67,12 @@ function recordingProvider(id: string): { p: MusicProvider; calls: Record<string
       rec("createPlaylistNamed", [ctx, name]);
       return "new-playlist-id";
     },
-    async writeTracks(ctx: UserCtx, t: ResolvedTarget, pl: string | undefined, ids: readonly string[]): Promise<void> {
+    async writeTracks(
+      ctx: UserCtx,
+      t: ResolvedTarget,
+      pl: string | undefined,
+      ids: readonly string[],
+    ): Promise<void> {
       rec("writeTracks", [ctx, t, pl, ids]);
     },
   };
@@ -91,29 +102,53 @@ const source: CanonicalTrack = {
 // readSource → source provider, with OWNER ctx + the target verbatim
 await deps.readSource("srcp", target);
 assert(src.calls["readSourceTracks"]?.[0] === OWNER, "readSource passes the OWNER ctx");
-assert(src.calls["readSourceTracks"]?.[1] === target, "readSource routes to the SOURCE provider with the target");
+assert(
+  src.calls["readSourceTracks"]?.[1] === target,
+  "readSource routes to the SOURCE provider with the target",
+);
 
 // readDestination → destination provider
 await deps.readDestination("dstp", target);
-assert(dst.calls["readDestinationTracks"] !== undefined, "readDestination routes to the DESTINATION provider");
-assert(src.calls["readDestinationTracks"] === undefined, "readDestination does NOT call the source provider");
+assert(
+  dst.calls["readDestinationTracks"] !== undefined,
+  "readDestination routes to the DESTINATION provider",
+);
+assert(
+  src.calls["readDestinationTracks"] === undefined,
+  "readDestination does NOT call the source provider",
+);
 
 // createDestination → destination provider, name forwarded
 await deps.createDestination("dstp", "My New Playlist");
-assert(dst.calls["createPlaylistNamed"]?.[1] === "My New Playlist", "createDestination forwards the name to the dest provider");
+assert(
+  dst.calls["createPlaylistNamed"]?.[1] === "My New Playlist",
+  "createDestination forwards the name to the dest provider",
+);
 
 // writeTracks → destination provider, ids forwarded
 await deps.writeTracks("dstp", { kind: "liked" }, "PL9", ["a", "b"]);
 const writeArgs = dst.calls["writeTracks"];
-assert(Array.isArray(writeArgs?.[3]) && (writeArgs?.[3] as string[]).length === 2, "writeTracks forwards the dest ids to the dest provider");
+assert(
+  Array.isArray(writeArgs?.[3]) && (writeArgs?.[3] as string[]).length === 2,
+  "writeTracks forwards the dest ids to the dest provider",
+);
 
 // match → searches the DESTINATION provider (the refactor's core change), NOT
 // the source. Source has an ISRC + dest supportsIsrc → Tier-1 then Tier-2.
 await deps.match(source, false, "dstp");
 const isrcArgs = dst.calls["searchByIsrc"];
-assert(Array.isArray(isrcArgs?.[1]) && (isrcArgs?.[1] as string[])[0] === "USUG10000001", "match runs Tier-1 ISRC search on the DEST provider");
-assert(dst.calls["searchByTerm"] !== undefined, "match falls through to Tier-2 search on the dest provider");
-assert(src.calls["searchByIsrc"] === undefined, "match does NOT search the SOURCE provider (no opposite-platform inference)");
+assert(
+  Array.isArray(isrcArgs?.[1]) && (isrcArgs?.[1] as string[])[0] === "USUG10000001",
+  "match runs Tier-1 ISRC search on the DEST provider",
+);
+assert(
+  dst.calls["searchByTerm"] !== undefined,
+  "match falls through to Tier-2 search on the dest provider",
+);
+assert(
+  src.calls["searchByIsrc"] === undefined,
+  "match does NOT search the SOURCE provider (no opposite-platform inference)",
+);
 
 __clearRegistry();
 __resetOperationDeps();

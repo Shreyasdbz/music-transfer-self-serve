@@ -43,7 +43,10 @@ function resolveSafe(pathname: string): string | undefined {
   return target;
 }
 
-const STATIC_HEADERS = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } as const;
+const STATIC_HEADERS = {
+  "Cache-Control": "no-store",
+  "X-Content-Type-Options": "nosniff",
+} as const;
 const META_TAG_RE = /<meta\s+[^>]*\bname=["']csrf-token["'][^>]*>/i;
 
 /** Serve a static file under WEB_DIR for `pathname`, injecting the CSRF token
@@ -65,10 +68,16 @@ export function serveStaticFile(pathname: string, csrfToken: string): Response |
     } else {
       body = metaTag + body;
     }
-    return new Response(body, { status: 200, headers: { "Content-Type": type, ...STATIC_HEADERS } });
+    return new Response(body, {
+      status: 200,
+      headers: { "Content-Type": type, ...STATIC_HEADERS },
+    });
   }
 
   // Non-HTML: return the bytes (Response sets Content-Length from the body).
   const buf = readFileSync(filePath);
-  return new Response(new Uint8Array(buf), { status: 200, headers: { "Content-Type": type, ...STATIC_HEADERS } });
+  return new Response(new Uint8Array(buf), {
+    status: 200,
+    headers: { "Content-Type": type, ...STATIC_HEADERS },
+  });
 }

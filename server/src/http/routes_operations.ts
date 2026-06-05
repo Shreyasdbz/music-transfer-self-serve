@@ -7,12 +7,22 @@ import type { Hono } from "hono";
 import { err, readJson } from "./respond.js";
 import { sse } from "./sse.js";
 import { gateBlocked } from "./routes_preflight.js";
-import { findCatalogByName, normalizeName, type NameCandidate, type Platform } from "../ledger/catalogStore.js";
+import {
+  findCatalogByName,
+  normalizeName,
+  type NameCandidate,
+  type Platform,
+} from "../ledger/catalogStore.js";
 import { listMyPlaylists, playlistTrackCount } from "../clients/spotify.js";
 import { listLibraryPlaylists } from "../clients/apple.js";
 import { log } from "../util/log.js";
 import { startOperation, subscribeOperation } from "../operation/runner.js";
-import { getOperation, getOperationEvents, listOperations, OperationRunningConflict } from "../ledger/operationsStore.js";
+import {
+  getOperation,
+  getOperationEvents,
+  listOperations,
+  OperationRunningConflict,
+} from "../ledger/operationsStore.js";
 import { getProvider, hasProvider } from "../providers/registry.js";
 
 type Side = "source" | "destination";
@@ -61,7 +71,9 @@ type ResolveOutcome =
 // and fall back to bare-id only on a 0-name result.
 
 function parseSpotifyUrl(q: string): string | undefined {
-  const m = q.match(/open\.spotify\.com\/playlist\/([A-Za-z0-9]+)/) ?? q.match(/spotify:playlist:([A-Za-z0-9]+)/);
+  const m =
+    q.match(/open\.spotify\.com\/playlist\/([A-Za-z0-9]+)/) ??
+    q.match(/spotify:playlist:([A-Za-z0-9]+)/);
   return m?.[1];
 }
 
@@ -88,12 +100,24 @@ async function liveNameMatches(platform: Platform, target: string): Promise<Name
       const pls = await listMyPlaylists();
       return pls
         .filter((p) => normalizeName(p.name) === target)
-        .map((p) => ({ id: p.id, name: p.name, owner: p.owner?.id ?? null, track_count: playlistTrackCount(p) ?? null, url: p.external_urls?.spotify ?? null }));
+        .map((p) => ({
+          id: p.id,
+          name: p.name,
+          owner: p.owner?.id ?? null,
+          track_count: playlistTrackCount(p) ?? null,
+          url: p.external_urls?.spotify ?? null,
+        }));
     }
     const pls = await listLibraryPlaylists();
     return pls
       .filter((p) => normalizeName(p.attributes.name) === target)
-      .map((p) => ({ id: p.id, name: p.attributes.name, owner: null, track_count: null, url: null }));
+      .map((p) => ({
+        id: p.id,
+        name: p.attributes.name,
+        owner: null,
+        track_count: null,
+        url: null,
+      }));
   } catch (err) {
     log.warn("operations.live_name_search_failed", { platform, message: (err as Error).message });
     return [];
@@ -110,7 +134,11 @@ function unionMatches(cache: NameCandidate[], live: NameCandidate[]): NameCandid
 }
 
 /** Resolve one side's target per §9. */
-async function resolveTarget(platform: Platform, side: Side, t: TargetInput | undefined): Promise<ResolveOutcome> {
+async function resolveTarget(
+  platform: Platform,
+  side: Side,
+  t: TargetInput | undefined,
+): Promise<ResolveOutcome> {
   if (!t) {
     return { ok: false, status: 422, body: { side, error: "missing_target" } };
   }
@@ -146,7 +174,10 @@ async function resolveTarget(platform: Platform, side: Side, t: TargetInput | un
   // empty cache — without it a real playlist could be missed and (on the
   // destination side) duplicated.
   const target = normalizeName(q);
-  const matches = unionMatches(findCatalogByName(platform, q), await liveNameMatches(platform, target));
+  const matches = unionMatches(
+    findCatalogByName(platform, q),
+    await liveNameMatches(platform, target),
+  );
   if (matches.length === 0) {
     // Nothing matched by name. A bare id-looking token now resolves as an id.
     if (looksLikeBareId(platform, q)) {
@@ -232,7 +263,8 @@ export function registerOperationsRoutes(app: Hono): void {
       };
 
       const emitter = subscribeOperation(id);
-      const onEvent = (e: { seq: number; type: string; payload: unknown }): void => send(e.seq, e.type, e.payload);
+      const onEvent = (e: { seq: number; type: string; payload: unknown }): void =>
+        send(e.seq, e.type, e.payload);
       if (emitter) {
         emitter.on("event", onEvent);
         api.onClose(() => emitter.off("event", onEvent));

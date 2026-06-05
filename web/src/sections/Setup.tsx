@@ -1,6 +1,14 @@
 import { For, Show, type JSX } from "solid-js";
 import { AppIcon, Button, Card, StatusPill, ThemeToggle } from "../components/index.js";
-import { authStatus, connectApple, connectSpotify, gate, preflight, providers, runPreflight } from "../store.js";
+import {
+  authStatus,
+  connectApple,
+  connectSpotify,
+  gate,
+  preflight,
+  providers,
+  runPreflight,
+} from "../store.js";
 import { brandColor, brandLogo } from "./brand.js";
 
 export function Header(): JSX.Element {
@@ -24,7 +32,7 @@ function connected(id: string): boolean {
 }
 
 export function Setup(): JSX.Element {
-  const sortedChecks = (): typeof preflight.checks[number][] =>
+  const sortedChecks = (): (typeof preflight.checks)[number][] =>
     Object.values(preflight.checks).sort((a, b) => a.seq - b.seq);
 
   return (
@@ -70,7 +78,8 @@ export function Setup(): JSX.Element {
         Permissions status
       </h3>
       <p class="section-sub t-caption">
-        Exercises every credential, scope, and read capability before catalog or transfers are allowed.
+        Exercises every credential, scope, and read capability before catalog or transfers are
+        allowed.
       </p>
       <Card>
         <div class="spread">

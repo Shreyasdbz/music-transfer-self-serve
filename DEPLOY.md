@@ -50,15 +50,15 @@ cp server/.env.example .env   # the only template lives in server/; compose read
 
 Network + access keys (all optional — omitting them = loopback/local behavior):
 
-| Key | Default | Purpose |
-| --- | --- | --- |
-| `PUBLIC_ORIGIN` | `http://127.0.0.1:8888` | The origin the browser sees, e.g. `https://music.example.com`. The Spotify redirect URI, the Origin allowlist, and the Host allowlist all derive from this. |
-| `BIND_HOST` | `127.0.0.1` | Address the server listens on. Compose sets `0.0.0.0` (the published port is loopback-only). |
-| `PORT` | `8888` | Listen port. |
-| `ALLOWED_ORIGINS` | `[PUBLIC_ORIGIN]` | CSV of origins accepted on POSTs (CSRF/Origin defense). |
-| `ALLOWED_HOSTS` | `host of PUBLIC_ORIGIN` | CSV of `Host` headers accepted (DNS-rebinding defense). Set to your domain if the proxy passes a different Host. |
-| `INSTANCE_ACCESS_TOKEN` | _(empty = open)_ | When set, the instance shows a login screen and requires this token once; a signed `HttpOnly`/`Secure`/`SameSite=Strict` session cookie is then issued. Generate a long random value. |
-| `SESSION_SECRET` | random per start | HMAC secret for the session cookie. **Set this** so sessions survive restarts. |
+| Key                     | Default                 | Purpose                                                                                                                                                                               |
+| ----------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUBLIC_ORIGIN`         | `http://127.0.0.1:8888` | The origin the browser sees, e.g. `https://music.example.com`. The Spotify redirect URI, the Origin allowlist, and the Host allowlist all derive from this.                           |
+| `BIND_HOST`             | `127.0.0.1`             | Address the server listens on. Compose sets `0.0.0.0` (the published port is loopback-only).                                                                                          |
+| `PORT`                  | `8888`                  | Listen port.                                                                                                                                                                          |
+| `ALLOWED_ORIGINS`       | `[PUBLIC_ORIGIN]`       | CSV of origins accepted on POSTs (CSRF/Origin defense).                                                                                                                               |
+| `ALLOWED_HOSTS`         | `host of PUBLIC_ORIGIN` | CSV of `Host` headers accepted (DNS-rebinding defense). Set to your domain if the proxy passes a different Host.                                                                      |
+| `INSTANCE_ACCESS_TOKEN` | _(empty = open)_        | When set, the instance shows a login screen and requires this token once; a signed `HttpOnly`/`Secure`/`SameSite=Strict` session cookie is then issued. Generate a long random value. |
+| `SESSION_SECRET`        | random per start        | HMAC secret for the session cookie. **Set this** so sessions survive restarts.                                                                                                        |
 
 Plus the credential keys (Spotify/Apple) from `.env.example`. **Never commit `.env` or the `.p8`.**
 

@@ -15,16 +15,37 @@ const SNAP = LEDGER_PATH + ".runner-test-snap";
 const _had = existsSync(LEDGER_PATH);
 if (_had) copyFileSync(LEDGER_PATH, SNAP);
 function restore(): void {
-  try { closeLedger(); } catch { /* */ }
-  if (_had) { copyFileSync(SNAP, LEDGER_PATH); try { unlinkSync(SNAP); } catch { /* */ } }
-  else if (existsSync(LEDGER_PATH)) { try { unlinkSync(LEDGER_PATH); } catch { /* */ } }
+  try {
+    closeLedger();
+  } catch {
+    /* */
+  }
+  if (_had) {
+    copyFileSync(SNAP, LEDGER_PATH);
+    try {
+      unlinkSync(SNAP);
+    } catch {
+      /* */
+    }
+  } else if (existsSync(LEDGER_PATH)) {
+    try {
+      unlinkSync(LEDGER_PATH);
+    } catch {
+      /* */
+    }
+  }
 }
 process.on("exit", restore);
-process.on("SIGINT", () => { restore(); process.exit(130); });
+process.on("SIGINT", () => {
+  restore();
+  process.exit(130);
+});
 
 function assert(c: unknown, m: string): void {
-  if (!c) { process.stderr.write(`FAIL  ${m}\n`); process.exitCode = 1; }
-  else process.stdout.write(`PASS  ${m}\n`);
+  if (!c) {
+    process.stderr.write(`FAIL  ${m}\n`);
+    process.exitCode = 1;
+  } else process.stdout.write(`PASS  ${m}\n`);
 }
 
 openLedger();
@@ -41,12 +62,21 @@ process.env = saved; // restore env
 
 const run = getPreflightRun(handle.id);
 assert(run !== undefined, "runner: run row persisted");
-assert(run?.checks.length === CHECKS.length, `runner: all ${CHECKS.length} checks recorded (got ${run?.checks.length})`);
+assert(
+  run?.checks.length === CHECKS.length,
+  `runner: all ${CHECKS.length} checks recorded (got ${run?.checks.length})`,
+);
 
 const byName = new Map(run!.checks.map((c) => [c.name, c]));
-assert(byName.get("env")?.status === "fail", `runner: env failed (got ${byName.get("env")?.status})`);
+assert(
+  byName.get("env")?.status === "fail",
+  `runner: env failed (got ${byName.get("env")?.status})`,
+);
 const downstream = run!.checks.filter((c) => c.name !== "env");
-assert(downstream.every((c) => c.status === "skip"), "runner: all 9 downstream → skip when env fails");
+assert(
+  downstream.every((c) => c.status === "skip"),
+  "runner: all 9 downstream → skip when env fails",
+);
 assert(
   downstream.every((c) => JSON.parse(c.detail!).reason === "prerequisite env failed"),
   "runner: skip detail reason = 'prerequisite env failed'",
@@ -55,12 +85,21 @@ assert(finalStatus === "failed", `runner: env-fail → final status 'failed' (go
 
 // env check detail reports the missing key
 const envDetail = JSON.parse(byName.get("env")!.detail!);
-assert(Array.isArray(envDetail.missing_keys) && envDetail.missing_keys.includes("APPLE_TEAM_ID"), "runner: env detail lists missing key");
+assert(
+  Array.isArray(envDetail.missing_keys) && envDetail.missing_keys.includes("APPLE_TEAM_ID"),
+  "runner: env detail lists missing key",
+);
 
 // ── seq ordering is stable (env=1, spotify 2-5, apple 6-10) ──────────────
 
 assert(byName.get("env")?.seq === 1, "runner: env seq=1");
-assert(byName.get("spotify_token")?.seq === 2 && byName.get("spotify_search")?.seq === 5, "runner: spotify group seq 2-5");
-assert(byName.get("apple_dev_token")?.seq === 6 && byName.get("apple_isrc_lookup")?.seq === 10, "runner: apple group seq 6-10");
+assert(
+  byName.get("spotify_token")?.seq === 2 && byName.get("spotify_search")?.seq === 5,
+  "runner: spotify group seq 2-5",
+);
+assert(
+  byName.get("apple_dev_token")?.seq === 6 && byName.get("apple_isrc_lookup")?.seq === 10,
+  "runner: apple group seq 6-10",
+);
 
 process.exit(process.exitCode ?? 0);

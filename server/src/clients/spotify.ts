@@ -76,7 +76,12 @@ async function paginate<T>(firstUrl: string): Promise<T[]> {
   let nextUrl: string | null = firstUrl;
   let pages = 0;
   while (nextUrl && pages < MAX_PAGES) {
-    const page: Page<T> = await httpJson<Page<T>>({ method: "GET", url: nextUrl, headers, ...AUTH_EXTRAS });
+    const page: Page<T> = await httpJson<Page<T>>({
+      method: "GET",
+      url: nextUrl,
+      headers,
+      ...AUTH_EXTRAS,
+    });
     out.push(...page.items);
     nextUrl = page.next;
     pages++;
@@ -193,19 +198,32 @@ export function sanitizeSearchTerm(term: string): string {
  * Spotify's default — enough to disambiguate. */
 export async function searchTracksByIsrc(isrc: string): Promise<SpotifyTrack[]> {
   const url = `${API}/v1/search?q=${encodeURIComponent(`isrc:${isrc}`)}&type=track`;
-  const r = await httpJson<SearchResponse>({ method: "GET", url, headers: await bearer(), ...AUTH_EXTRAS });
+  const r = await httpJson<SearchResponse>({
+    method: "GET",
+    url,
+    headers: await bearer(),
+    ...AUTH_EXTRAS,
+  });
   return r.tracks?.items ?? [];
 }
 
 /** Tier-2 scored search. `term` is typically "<title> <primary artist>";
  * it's sanitized of Spotify field-operators first. `limit` is clamped to
  * Spotify's documented max of 10. */
-export async function searchTracks(term: string, limit = SPOTIFY_SEARCH_MAX_LIMIT): Promise<SpotifyTrack[]> {
+export async function searchTracks(
+  term: string,
+  limit = SPOTIFY_SEARCH_MAX_LIMIT,
+): Promise<SpotifyTrack[]> {
   const safeLimit = Math.min(Math.max(1, limit), SPOTIFY_SEARCH_MAX_LIMIT);
   const safeTerm = sanitizeSearchTerm(term);
   if (safeTerm.length === 0) return [];
   const url = `${API}/v1/search?q=${encodeURIComponent(safeTerm)}&type=track&limit=${safeLimit}`;
-  const r = await httpJson<SearchResponse>({ method: "GET", url, headers: await bearer(), ...AUTH_EXTRAS });
+  const r = await httpJson<SearchResponse>({
+    method: "GET",
+    url,
+    headers: await bearer(),
+    ...AUTH_EXTRAS,
+  });
   return r.tracks?.items ?? [];
 }
 
@@ -278,7 +296,12 @@ export async function savedContains(trackIds: string[]): Promise<Set<string>> {
   for (let i = 0; i < trackIds.length; i += SPOTIFY_CONTAINS_BATCH) {
     const chunk = trackIds.slice(i, i + SPOTIFY_CONTAINS_BATCH);
     const url = `${API}/v1/me/library/contains?uris=${chunk.map((id) => encodeURIComponent(trackUri(id))).join(",")}`;
-    const flags = await httpJson<boolean[]>({ method: "GET", url, headers: await bearer(), ...AUTH_EXTRAS });
+    const flags = await httpJson<boolean[]>({
+      method: "GET",
+      url,
+      headers: await bearer(),
+      ...AUTH_EXTRAS,
+    });
     chunk.forEach((id, idx) => {
       if (flags[idx]) saved.add(id);
     });

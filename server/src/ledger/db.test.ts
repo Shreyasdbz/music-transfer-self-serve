@@ -9,7 +9,13 @@
 // the simplest correct approach.
 
 import Database from "better-sqlite3";
-import { closeLedger, openLedger, __openLedgerAt, __setLedgerInstance, LATEST_SCHEMA_VERSION } from "./db.js";
+import {
+  closeLedger,
+  openLedger,
+  __openLedgerAt,
+  __setLedgerInstance,
+  LATEST_SCHEMA_VERSION,
+} from "./db.js";
 import { LEDGER_PATH } from "../config.js";
 import { copyFileSync, existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -33,7 +39,11 @@ function cleanup(): void {
   // can never leave a stale journal that SQLite would replay over the snapshot.
   for (const side of [`${LEDGER_PATH}-wal`, `${LEDGER_PATH}-shm`]) {
     if (existsSync(side)) {
-      try { unlinkSync(side); } catch { /* ignore */ }
+      try {
+        unlinkSync(side);
+      } catch {
+        /* ignore */
+      }
     }
   }
   if (_hadLedger) {
@@ -70,25 +80,52 @@ function assert(cond: unknown, msg: string): void {
 
 const db = openLedger();
 
-const version = (db.prepare("SELECT version FROM schema_version").get() as { version: number }).version;
-assert(version === LATEST_SCHEMA_VERSION, `AC1: schema_version = ${LATEST_SCHEMA_VERSION} (got ${version})`);
+const version = (db.prepare("SELECT version FROM schema_version").get() as { version: number })
+  .version;
+assert(
+  version === LATEST_SCHEMA_VERSION,
+  `AC1: schema_version = ${LATEST_SCHEMA_VERSION} (got ${version})`,
+);
 
-const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[])
-  .map((r) => r.name);
-for (const t of ["tracks", "catalog", "preflight_runs", "preflight_checks", "operations", "operation_events", "schema_version", "users", "track_provider_ids"]) {
+const tables = (
+  db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as {
+    name: string;
+  }[]
+).map((r) => r.name);
+for (const t of [
+  "tracks",
+  "catalog",
+  "preflight_runs",
+  "preflight_checks",
+  "operations",
+  "operation_events",
+  "schema_version",
+  "users",
+  "track_provider_ids",
+]) {
   assert(tables.includes(t), `AC1: table "${t}" present`);
 }
 
-const indexes = (db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'one_running%'").all() as { name: string }[])
-  .map((r) => r.name);
+const indexes = (
+  db
+    .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'one_running%'")
+    .all() as { name: string }[]
+).map((r) => r.name);
 assert(indexes.includes("one_running_op"), "AC1: partial unique index 'one_running_op' present");
-assert(indexes.includes("one_running_preflight"), "AC1: partial unique index 'one_running_preflight' present");
+assert(
+  indexes.includes("one_running_preflight"),
+  "AC1: partial unique index 'one_running_preflight' present",
+);
 
 // ── v2 schema (migration #2) — users + user_id columns ──────────────────
-const owner = db.prepare("SELECT id FROM users WHERE id = '__owner__'").get() as { id: string } | undefined;
+const owner = db.prepare("SELECT id FROM users WHERE id = '__owner__'").get() as
+  | { id: string }
+  | undefined;
 assert(owner?.id === "__owner__", "v2: users table seeded with __owner__");
 for (const tbl of ["catalog", "operations", "preflight_runs"]) {
-  const cols = (db.prepare(`PRAGMA table_info(${tbl})`).all() as { name: string }[]).map((c) => c.name);
+  const cols = (db.prepare(`PRAGMA table_info(${tbl})`).all() as { name: string }[]).map(
+    (c) => c.name,
+  );
   assert(cols.includes("user_id"), `v2: ${tbl}.user_id column present`);
 }
 
@@ -114,30 +151,52 @@ db.prepare(
    VALUES (?, ?, 'running', 'manual', 'ui')`,
 ).run("ac4-test-pf", seededAt);
 
-const opBefore = db.prepare("SELECT status, finished_at FROM operations WHERE id=?").get("ac4-test-op") as { status: string; finished_at: string | null };
-assert(opBefore.status === "running" && opBefore.finished_at === null, "AC4: seeded op is 'running' with finished_at NULL");
+const opBefore = db
+  .prepare("SELECT status, finished_at FROM operations WHERE id=?")
+  .get("ac4-test-op") as { status: string; finished_at: string | null };
+assert(
+  opBefore.status === "running" && opBefore.finished_at === null,
+  "AC4: seeded op is 'running' with finished_at NULL",
+);
 
 // Reopen — triggers the startup sweep.
 closeLedger();
 const db2 = openLedger();
 
-const opAfter = db2.prepare("SELECT status, finished_at FROM operations WHERE id=?").get("ac4-test-op") as { status: string; finished_at: string | null };
-assert(opAfter.status === "interrupted", `AC4: stranded op flipped to 'interrupted' (got ${opAfter.status})`);
+const opAfter = db2
+  .prepare("SELECT status, finished_at FROM operations WHERE id=?")
+  .get("ac4-test-op") as { status: string; finished_at: string | null };
+assert(
+  opAfter.status === "interrupted",
+  `AC4: stranded op flipped to 'interrupted' (got ${opAfter.status})`,
+);
 assert(opAfter.finished_at !== null, "AC4: stranded op got finished_at set");
 
-const pfAfter = db2.prepare("SELECT status, finished_at FROM preflight_runs WHERE id=?").get("ac4-test-pf") as { status: string; finished_at: string | null };
-assert(pfAfter.status === "interrupted", `AC4: stranded preflight flipped to 'interrupted' (got ${pfAfter.status})`);
+const pfAfter = db2
+  .prepare("SELECT status, finished_at FROM preflight_runs WHERE id=?")
+  .get("ac4-test-pf") as { status: string; finished_at: string | null };
+assert(
+  pfAfter.status === "interrupted",
+  `AC4: stranded preflight flipped to 'interrupted' (got ${pfAfter.status})`,
+);
 
-const evt = db2.prepare("SELECT seq, type, payload FROM operation_events WHERE operation_id=? ORDER BY seq").all("ac4-test-op") as { seq: number; type: string; payload: string }[];
+const evt = db2
+  .prepare("SELECT seq, type, payload FROM operation_events WHERE operation_id=? ORDER BY seq")
+  .all("ac4-test-op") as { seq: number; type: string; payload: string }[];
 assert(evt.length === 1, `AC4: exactly 1 event row appended (got ${evt.length})`);
 assert(evt[0]?.type === "interrupted", `AC4: event row type = 'interrupted' (got ${evt[0]?.type})`);
 const payload = JSON.parse(evt[0]!.payload);
-assert(payload.reason === "server_restart_during_run", `AC4: event payload reason set (got ${payload.reason})`);
+assert(
+  payload.reason === "server_restart_during_run",
+  `AC4: event payload reason set (got ${payload.reason})`,
+);
 
 // Idempotency — reopen again, sweep should be a no-op (no new event rows).
 closeLedger();
 const db3 = openLedger();
-const evt2 = db3.prepare("SELECT COUNT(*) AS n FROM operation_events WHERE operation_id=?").get("ac4-test-op") as { n: number };
+const evt2 = db3
+  .prepare("SELECT COUNT(*) AS n FROM operation_events WHERE operation_id=?")
+  .get("ac4-test-op") as { n: number };
 assert(evt2.n === 1, `AC4: idempotent sweep — still exactly 1 event (got ${evt2.n})`);
 
 closeLedger();
@@ -149,7 +208,11 @@ const TMP = join(tmpdir(), `mtss-mig-test-${process.pid}.sqlite`);
 const cleanTmp = (): void => {
   for (const f of [TMP, `${TMP}-wal`, `${TMP}-shm`]) {
     if (existsSync(f)) {
-      try { unlinkSync(f); } catch { /* ignore */ }
+      try {
+        unlinkSync(f);
+      } catch {
+        /* ignore */
+      }
     }
   }
 };
@@ -178,11 +241,21 @@ v1.prepare("INSERT INTO schema_version(version) VALUES (1)").run();
 // ids (the third exercises the 'library'-kind backfill).
 // track1 uses a VALID ISRC so the end-to-end matcher test below can compute the
 // same identity_key and hit the backfilled cache.
-v1.prepare("INSERT INTO tracks (identity_key, isrc, norm_title, norm_artist, duration_ms, spotify_id, apple_catalog_id, apple_library_id, match_tier, confidence, updated_at) VALUES ('isrc:USUG12604763','USUG12604763','t1','a1',200000,'sp-mig-1','ap-mig-1',NULL,'isrc',100,?)").run(nowIso);
-v1.prepare("INSERT INTO tracks (identity_key, isrc, norm_title, norm_artist, duration_ms, spotify_id, apple_catalog_id, apple_library_id, match_tier, confidence, updated_at) VALUES ('isrc:MIGV1000002','MIGV1000002','t2','a2',180000,'sp-mig-2',NULL,NULL,'isrc',100,?)").run(nowIso);
-v1.prepare("INSERT INTO tracks (identity_key, isrc, norm_title, norm_artist, duration_ms, spotify_id, apple_catalog_id, apple_library_id, match_tier, confidence, updated_at) VALUES ('isrc:MIGV1000003','MIGV1000003','t3','a3',210000,'sp-mig-3','ap-mig-3','lib-mig-3','isrc',100,?)").run(nowIso);
-v1.prepare("INSERT INTO catalog (platform, kind, external_id, name, fetched_at) VALUES ('spotify','playlist','pl-1','My PL',?)").run(nowIso);
-v1.prepare("INSERT INTO operations (id, created_at, source, destination, source_target, destination_target, status) VALUES ('op-mig-1',?,'spotify','apple','{\"kind\":\"liked\"}','{\"kind\":\"favorites\"}','succeeded')").run(nowIso);
+v1.prepare(
+  "INSERT INTO tracks (identity_key, isrc, norm_title, norm_artist, duration_ms, spotify_id, apple_catalog_id, apple_library_id, match_tier, confidence, updated_at) VALUES ('isrc:USUG12604763','USUG12604763','t1','a1',200000,'sp-mig-1','ap-mig-1',NULL,'isrc',100,?)",
+).run(nowIso);
+v1.prepare(
+  "INSERT INTO tracks (identity_key, isrc, norm_title, norm_artist, duration_ms, spotify_id, apple_catalog_id, apple_library_id, match_tier, confidence, updated_at) VALUES ('isrc:MIGV1000002','MIGV1000002','t2','a2',180000,'sp-mig-2',NULL,NULL,'isrc',100,?)",
+).run(nowIso);
+v1.prepare(
+  "INSERT INTO tracks (identity_key, isrc, norm_title, norm_artist, duration_ms, spotify_id, apple_catalog_id, apple_library_id, match_tier, confidence, updated_at) VALUES ('isrc:MIGV1000003','MIGV1000003','t3','a3',210000,'sp-mig-3','ap-mig-3','lib-mig-3','isrc',100,?)",
+).run(nowIso);
+v1.prepare(
+  "INSERT INTO catalog (platform, kind, external_id, name, fetched_at) VALUES ('spotify','playlist','pl-1','My PL',?)",
+).run(nowIso);
+v1.prepare(
+  "INSERT INTO operations (id, created_at, source, destination, source_target, destination_target, status) VALUES ('op-mig-1',?,'spotify','apple','{\"kind\":\"liked\"}','{\"kind\":\"favorites\"}','succeeded')",
+).run(nowIso);
 const n = (sql: string): number => (v1.prepare(sql).get() as { n: number }).n;
 const tracksBefore = n("SELECT COUNT(*) n FROM tracks");
 const catalogBefore = n("SELECT COUNT(*) n FROM catalog");
@@ -193,34 +266,94 @@ v1.close();
 const mdb = __openLedgerAt(TMP);
 const mver = (mdb.prepare("SELECT MAX(version) v FROM schema_version").get() as { v: number }).v;
 assert(mver === 2, `migration: v1 ledger upgraded to schema_version 2 (got ${mver})`);
-assert(n2(mdb, "SELECT COUNT(*) n FROM schema_version") === 1, "migration: schema_version collapsed to a single row (not the INSERT-OR-REPLACE bug)");
+assert(
+  n2(mdb, "SELECT COUNT(*) n FROM schema_version") === 1,
+  "migration: schema_version collapsed to a single row (not the INSERT-OR-REPLACE bug)",
+);
 
-assert(n2(mdb, "SELECT COUNT(*) n FROM tracks") === tracksBefore, "migration: tracks row count unchanged (zero data loss)");
-assert(n2(mdb, "SELECT COUNT(*) n FROM catalog") === catalogBefore, "migration: catalog row count unchanged");
-assert(n2(mdb, "SELECT COUNT(*) n FROM operations") === opsBefore, "migration: operations row count unchanged");
+assert(
+  n2(mdb, "SELECT COUNT(*) n FROM tracks") === tracksBefore,
+  "migration: tracks row count unchanged (zero data loss)",
+);
+assert(
+  n2(mdb, "SELECT COUNT(*) n FROM catalog") === catalogBefore,
+  "migration: catalog row count unchanged",
+);
+assert(
+  n2(mdb, "SELECT COUNT(*) n FROM operations") === opsBefore,
+  "migration: operations row count unchanged",
+);
 
 const ref = (k: string, p: string, kind = "default"): string | undefined =>
-  (mdb.prepare("SELECT provider_ref r FROM track_provider_ids WHERE identity_key=? AND provider_id=? AND provider_kind=?").get(k, p, kind) as { r: string } | undefined)?.r;
-assert(ref("isrc:USUG12604763", "spotify") === "sp-mig-1", "migration backfill: spotify_id → track_provider_ids");
-assert(ref("isrc:USUG12604763", "apple") === "ap-mig-1", "migration backfill: apple_catalog_id → track_provider_ids");
-assert(ref("isrc:MIGV1000002", "spotify") === "sp-mig-2", "migration backfill: spotify-only track backfilled");
-assert(ref("isrc:MIGV1000002", "apple") === undefined, "migration backfill: no apple ref for a spotify-only track");
+  (
+    mdb
+      .prepare(
+        "SELECT provider_ref r FROM track_provider_ids WHERE identity_key=? AND provider_id=? AND provider_kind=?",
+      )
+      .get(k, p, kind) as { r: string } | undefined
+  )?.r;
+assert(
+  ref("isrc:USUG12604763", "spotify") === "sp-mig-1",
+  "migration backfill: spotify_id → track_provider_ids",
+);
+assert(
+  ref("isrc:USUG12604763", "apple") === "ap-mig-1",
+  "migration backfill: apple_catalog_id → track_provider_ids",
+);
+assert(
+  ref("isrc:MIGV1000002", "spotify") === "sp-mig-2",
+  "migration backfill: spotify-only track backfilled",
+);
+assert(
+  ref("isrc:MIGV1000002", "apple") === undefined,
+  "migration backfill: no apple ref for a spotify-only track",
+);
 // library-kind backfill: coexists with the apple 'default' ref for the same key.
-assert(ref("isrc:MIGV1000003", "apple") === "ap-mig-3", "migration backfill: apple 'default' id for the all-ids track");
-assert(ref("isrc:MIGV1000003", "apple", "library") === "lib-mig-3", "migration backfill: apple_library_id → 'library' kind (coexists with 'default')");
-assert(n2(mdb, "SELECT COUNT(*) n FROM track_provider_ids") === 6, "migration backfill: 6 provider refs (3 spotify + 2 apple-default + 1 apple-library)");
+assert(
+  ref("isrc:MIGV1000003", "apple") === "ap-mig-3",
+  "migration backfill: apple 'default' id for the all-ids track",
+);
+assert(
+  ref("isrc:MIGV1000003", "apple", "library") === "lib-mig-3",
+  "migration backfill: apple_library_id → 'library' kind (coexists with 'default')",
+);
+assert(
+  n2(mdb, "SELECT COUNT(*) n FROM track_provider_ids") === 6,
+  "migration backfill: 6 provider refs (3 spotify + 2 apple-default + 1 apple-library)",
+);
 
-const opUser = (mdb.prepare("SELECT user_id FROM operations WHERE id='op-mig-1'").get() as { user_id: string }).user_id;
-assert(opUser === "__owner__", `migration: existing operations row backfilled user_id=__owner__ (got ${opUser})`);
+const opUser = (
+  mdb.prepare("SELECT user_id FROM operations WHERE id='op-mig-1'").get() as { user_id: string }
+).user_id;
+assert(
+  opUser === "__owner__",
+  `migration: existing operations row backfilled user_id=__owner__ (got ${opUser})`,
+);
 
 // End-to-end: the load-bearing V2 claim — a v1-cached match (now backfilled into
 // track_provider_ids) resolves through the MATCHER with no live search. Point
 // the engine at the migrated temp ledger and run matchToDestination on track1.
 __setLedgerInstance(mdb);
-const e2eSource: CanonicalTrack = { isrc: "USUG12604763", title: "t1", primaryArtist: "a1", artists: ["a1"], album: undefined, durationMs: 200_000, explicit: undefined, source: "spotify", sourceId: "sp-mig-1" };
+const e2eSource: CanonicalTrack = {
+  isrc: "USUG12604763",
+  title: "t1",
+  primaryArtist: "a1",
+  artists: ["a1"],
+  album: undefined,
+  durationMs: 200_000,
+  explicit: undefined,
+  source: "spotify",
+  sourceId: "sp-mig-1",
+};
 const e2eHit = await matchToDestination(e2eSource, appleDestThatThrows());
-assert(e2eHit.fromCache, "migration→matcher: backfilled v1 match resolves fromCache (no live search)");
-assert(e2eHit.destination?.id === "ap-mig-1", `migration→matcher: cache returns the backfilled apple id (got ${e2eHit.destination?.id})`);
+assert(
+  e2eHit.fromCache,
+  "migration→matcher: backfilled v1 match resolves fromCache (no live search)",
+);
+assert(
+  e2eHit.destination?.id === "ap-mig-1",
+  `migration→matcher: cache returns the backfilled apple id (got ${e2eHit.destination?.id})`,
+);
 __setLedgerInstance(undefined);
 
 const tpiBefore = n2(mdb, "SELECT COUNT(*) n FROM track_provider_ids");
@@ -228,10 +361,19 @@ mdb.close();
 
 // Re-open the already-v2 ledger → migration #2 must be a NO-OP (resume safety).
 const mdb2 = __openLedgerAt(TMP);
-assert((mdb2.prepare("SELECT MAX(version) v FROM schema_version").get() as { v: number }).v === 2, "re-open: schema_version stays 2");
-assert(n2(mdb2, "SELECT COUNT(*) n FROM schema_version") === 1, "re-open: still a single schema_version row");
+assert(
+  (mdb2.prepare("SELECT MAX(version) v FROM schema_version").get() as { v: number }).v === 2,
+  "re-open: schema_version stays 2",
+);
+assert(
+  n2(mdb2, "SELECT COUNT(*) n FROM schema_version") === 1,
+  "re-open: still a single schema_version row",
+);
 assert(n2(mdb2, "SELECT COUNT(*) n FROM users") === 1, "re-open: __owner__ not duplicated");
-assert(n2(mdb2, "SELECT COUNT(*) n FROM track_provider_ids") === tpiBefore, "re-open: backfill not re-run (provider ref count stable)");
+assert(
+  n2(mdb2, "SELECT COUNT(*) n FROM track_provider_ids") === tpiBefore,
+  "re-open: backfill not re-run (provider ref count stable)",
+);
 mdb2.close();
 cleanTmp();
 

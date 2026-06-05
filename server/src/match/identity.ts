@@ -85,7 +85,8 @@ export function normalize(s: string | undefined | null): string {
 /** Strip common "feat. X" / "featuring X" / "(feat. X)" suffixes from a
  * title or artist string before normalization. Spotify and Apple disagree
  * about whether featured artists live in the title or the artist list. */
-const FEAT_RE = /[([{][^)\]}]*\b(?:feat\.?|ft\.?|featuring)\b[^)\]}]*[)\]}]|[\s,-]+(?:feat\.?|ft\.?|featuring)\b.*$/i;
+const FEAT_RE =
+  /[([{][^)\]}]*\b(?:feat\.?|ft\.?|featuring)\b[^)\]}]*[)\]}]|[\s,-]+(?:feat\.?|ft\.?|featuring)\b.*$/i;
 
 export function stripFeatured(s: string): string {
   return s.replace(FEAT_RE, "").trim();

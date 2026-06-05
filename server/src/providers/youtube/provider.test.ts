@@ -30,7 +30,10 @@ async function rejects(p: Promise<unknown>, label: string): Promise<void> {
     await p;
     assert(false, `${label} should reject`);
   } catch (e) {
-    assert((e as Error).message.startsWith("provider_unavailable:youtube"), `${label} rejects provider_unavailable`);
+    assert(
+      (e as Error).message.startsWith("provider_unavailable:youtube"),
+      `${label} rejects provider_unavailable`,
+    );
   }
 }
 

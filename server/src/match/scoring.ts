@@ -14,7 +14,14 @@
 // changes. Don't tune by editing the rubric — change the constants and
 // document the new value in PROGRESS.md.
 
-import { durationsClose, normalize, normArtist, normTitle, variantTokens, type CanonicalTrack } from "./identity.js";
+import {
+  durationsClose,
+  normalize,
+  normArtist,
+  normTitle,
+  variantTokens,
+  type CanonicalTrack,
+} from "./identity.js";
 
 export const SCORE_ACCEPT_THRESHOLD = 70;
 export const DURATION_TOLERANCE_MS = 3000;
@@ -59,7 +66,11 @@ export function score(source: CanonicalTrack, candidate: CanonicalTrack): ScoreB
       ? SCORE_PRIMARY_ARTIST
       : 0;
 
-  const durationPoints = durationsClose(source.durationMs, candidate.durationMs, DURATION_TOLERANCE_MS)
+  const durationPoints = durationsClose(
+    source.durationMs,
+    candidate.durationMs,
+    DURATION_TOLERANCE_MS,
+  )
     ? SCORE_DURATION
     : 0;
 

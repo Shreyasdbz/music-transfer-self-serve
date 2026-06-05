@@ -41,7 +41,9 @@ export function StatusPill(props: {
   return (
     <span class={`pill pill-${props.tone} t-status`}>
       <Show when={props.tone === "general"}>
-        <span class="pill-glyph" aria-hidden="true">○</span>
+        <span class="pill-glyph" aria-hidden="true">
+          ○
+        </span>
       </Show>
       {props.children}
     </span>
@@ -51,9 +53,21 @@ export function StatusPill(props: {
 // ── Status dot (connection indicator) ─────────────────────────────────
 // `decorative` drops the ARIA role/label — use it when a visible text label
 // already conveys the state (so SR users don't hear it twice).
-export function StatusDot(props: { state: "on" | "off" | "error"; label?: string; decorative?: boolean }): JSX.Element {
-  if (props.decorative) return <span class="status-dot" data-state={props.state} aria-hidden="true" />;
-  return <span class="status-dot" data-state={props.state} role="img" aria-label={props.label ?? props.state} />;
+export function StatusDot(props: {
+  state: "on" | "off" | "error";
+  label?: string;
+  decorative?: boolean;
+}): JSX.Element {
+  if (props.decorative)
+    return <span class="status-dot" data-state={props.state} aria-hidden="true" />;
+  return (
+    <span
+      class="status-dot"
+      data-state={props.state}
+      role="img"
+      aria-label={props.label ?? props.state}
+    />
+  );
 }
 
 const STATE_TEXT: Record<"on" | "off" | "error", string> = {
@@ -65,7 +79,12 @@ const STATE_TEXT: Record<"on" | "off" | "error", string> = {
 // ── App / provider icon (brand color is data, not a theme token) ──────
 // With `src`, renders the brand logo image (the PNGs are already full circular
 // marks, so no color chip behind them). Without, falls back to a color chip.
-export function AppIcon(props: { color: string; label: string; src?: string | undefined; children?: JSX.Element }): JSX.Element {
+export function AppIcon(props: {
+  color: string;
+  label: string;
+  src?: string | undefined;
+  children?: JSX.Element;
+}): JSX.Element {
   // Decorative: every call site renders the provider name as adjacent text, so
   // the logo carries no extra info for SR users (mirrors StatusDot `decorative`).
   if (props.src) {
@@ -132,7 +151,9 @@ export function Collapsible(props: {
     <div class="collapsible" data-open={open()}>
       <button class="collapsible-header" aria-expanded={open()} onClick={() => setOpen(!open())}>
         <span class="collapsible-title t-note">{props.title}</span>
-        <span class="collapsible-chevron" aria-hidden="true">▾</span>
+        <span class="collapsible-chevron" aria-hidden="true">
+          ▾
+        </span>
       </button>
       <Show when={open()}>
         <div class="collapsible-body">{props.children}</div>

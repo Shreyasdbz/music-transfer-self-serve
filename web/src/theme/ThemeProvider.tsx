@@ -2,7 +2,15 @@
 // drives the [data-theme] attribute on <html> (absent for "auto" so the
 // prefers-color-scheme media query in tokens.css takes over).
 
-import { createContext, useContext, createSignal, createEffect, onCleanup, type Accessor, type JSX } from "solid-js";
+import {
+  createContext,
+  useContext,
+  createSignal,
+  createEffect,
+  onCleanup,
+  type Accessor,
+  type JSX,
+} from "solid-js";
 
 export type ThemePref = "light" | "dark" | "auto";
 export type ResolvedTheme = "light" | "dark";
@@ -36,7 +44,8 @@ export function ThemeProvider(props: { children: JSX.Element }): JSX.Element {
   mql.addEventListener("change", onSystemChange);
   onCleanup(() => mql.removeEventListener("change", onSystemChange));
 
-  const resolved = (): ResolvedTheme => (pref() === "auto" ? (systemDark() ? "dark" : "light") : (pref() as ResolvedTheme));
+  const resolved = (): ResolvedTheme =>
+    pref() === "auto" ? (systemDark() ? "dark" : "light") : (pref() as ResolvedTheme);
 
   // Reflect the preference onto <html>: explicit themes set the attribute;
   // "auto" removes it so the CSS prefers-color-scheme fallback applies.

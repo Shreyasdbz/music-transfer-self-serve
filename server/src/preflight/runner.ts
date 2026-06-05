@@ -25,7 +25,14 @@ import {
   type PreflightSurface,
   type PreflightTrigger,
 } from "../ledger/preflightStore.js";
-import { CHECKS, failureDetail, validateDetail, type CheckDef, type CheckName, type CheckResult } from "./checks.js";
+import {
+  CHECKS,
+  failureDetail,
+  validateDetail,
+  type CheckDef,
+  type CheckName,
+  type CheckResult,
+} from "./checks.js";
 
 export interface CheckEvent {
   readonly seq: number;
@@ -57,7 +64,12 @@ function emit(runId: string, type: "check" | "complete", payload: unknown): void
   emitters.get(runId)?.emit(type, payload);
 }
 
-function persistAndEmit(runId: string, def: CheckDef, result: CheckResult, durationMs: number): void {
+function persistAndEmit(
+  runId: string,
+  def: CheckDef,
+  result: CheckResult,
+  durationMs: number,
+): void {
   validateDetail(def.name, result.status, result.detail);
   const detailJson = JSON.stringify(result.detail);
   insertPreflightCheck({
@@ -132,12 +144,21 @@ function computeFinalStatus(statuses: CheckStatus[]): PreflightStatus {
 
 /** Start a preflight run. Returns the id immediately and a `done` promise.
  * Throws PreflightRunningConflict if one is already running. */
-export function runPreflight(opts: { trigger: PreflightTrigger; surface: PreflightSurface }): PreflightHandle {
+export function runPreflight(opts: {
+  trigger: PreflightTrigger;
+  surface: PreflightSurface;
+}): PreflightHandle {
   const id = randomUUID();
   const startedAt = new Date().toISOString();
   // insertPreflightRun throws PreflightRunningConflict on a second 'running'
   // row — let it propagate to the caller (route → 409).
-  insertPreflightRun({ id, started_at: startedAt, status: "running", trigger: opts.trigger, surface: opts.surface });
+  insertPreflightRun({
+    id,
+    started_at: startedAt,
+    status: "running",
+    trigger: opts.trigger,
+    surface: opts.surface,
+  });
   emitters.set(id, new EventEmitter());
 
   const done = (async (): Promise<PreflightStatus> => {
@@ -153,7 +174,10 @@ export function runPreflight(opts: { trigger: PreflightTrigger; surface: Preflig
           allStatuses.push("skip");
         }
       } else {
-        const [spotify, apple] = await Promise.all([runGroup(id, "spotify"), runGroup(id, "apple")]);
+        const [spotify, apple] = await Promise.all([
+          runGroup(id, "spotify"),
+          runGroup(id, "apple"),
+        ]);
         allStatuses.push(...spotify, ...apple);
       }
 

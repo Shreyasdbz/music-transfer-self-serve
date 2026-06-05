@@ -18,7 +18,10 @@ import { stopNonceSweeper } from "../auth/apple.js";
 /** Send a raw HTTP/1.1 request and read the response. Used for the Host-
  * header AC because Node's fetch silently overrides the Host header to
  * match the URL (so we can't test rejecting Host=localhost via fetch). */
-function rawRequest(host: string, path: string): Promise<{ status: number; headers: Map<string, string>; body: string }> {
+function rawRequest(
+  host: string,
+  path: string,
+): Promise<{ status: number; headers: Map<string, string>; body: string }> {
   return new Promise((resolvePromise, rejectPromise) => {
     const socket = connect(8888, "127.0.0.1", () => {
       socket.write(`GET ${path} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
@@ -56,19 +59,40 @@ const SNAP = LEDGER_PATH + ".server-test-snap";
 const _had = existsSync(LEDGER_PATH);
 if (_had) copyFileSync(LEDGER_PATH, SNAP);
 function restoreLedger(): void {
-  try { closeLedger(); } catch { /* ignore */ }
+  try {
+    closeLedger();
+  } catch {
+    /* ignore */
+  }
   for (const side of [`${LEDGER_PATH}-wal`, `${LEDGER_PATH}-shm`]) {
-    if (existsSync(side)) { try { unlinkSync(side); } catch { /* ignore */ } }
+    if (existsSync(side)) {
+      try {
+        unlinkSync(side);
+      } catch {
+        /* ignore */
+      }
+    }
   }
   if (_had) {
     copyFileSync(SNAP, LEDGER_PATH);
-    try { unlinkSync(SNAP); } catch { /* ignore */ }
+    try {
+      unlinkSync(SNAP);
+    } catch {
+      /* ignore */
+    }
   } else if (existsSync(LEDGER_PATH)) {
-    try { unlinkSync(LEDGER_PATH); } catch { /* ignore */ }
+    try {
+      unlinkSync(LEDGER_PATH);
+    } catch {
+      /* ignore */
+    }
   }
 }
 process.on("exit", restoreLedger);
-process.on("SIGINT", () => { restoreLedger(); process.exit(130); });
+process.on("SIGINT", () => {
+  restoreLedger();
+  process.exit(130);
+});
 
 // startHttpServer() now builds the Hono app and registers every route module
 // (incl. auth — the Spotify callback exercised by the XSS test below).
@@ -142,29 +166,56 @@ try {
 
   // ── V3 Hono migration: JSON response headers parity with v1 sendJson ─────
   const health = await fetch(`${B}/api/health`);
-  assert(health.headers.get("cache-control") === "no-store", `JSON headers: health Cache-Control=no-store (got ${health.headers.get("cache-control")})`);
-  assert(health.headers.get("x-content-type-options") === "nosniff", "JSON headers: health X-Content-Type-Options=nosniff");
-  assert((health.headers.get("content-type") ?? "").includes("application/json; charset=utf-8"), `JSON headers: health charset=utf-8 (got ${health.headers.get("content-type")})`);
+  assert(
+    health.headers.get("cache-control") === "no-store",
+    `JSON headers: health Cache-Control=no-store (got ${health.headers.get("cache-control")})`,
+  );
+  assert(
+    health.headers.get("x-content-type-options") === "nosniff",
+    "JSON headers: health X-Content-Type-Options=nosniff",
+  );
+  assert(
+    (health.headers.get("content-type") ?? "").includes("application/json; charset=utf-8"),
+    `JSON headers: health charset=utf-8 (got ${health.headers.get("content-type")})`,
+  );
 
   // ── JSON route shapes (lock the contract the migration must preserve) ─────
   const notFound = await fetch(`${B}/api/nope`);
   assert(notFound.status === 404, `404: unknown api → 404 (got ${notFound.status})`);
-  assert(((await notFound.json()) as { error?: string }).error === "not_found", "404: body {error:'not_found'}");
+  assert(
+    ((await notFound.json()) as { error?: string }).error === "not_found",
+    "404: body {error:'not_found'}",
+  );
   const nf2 = await fetch(`${B}/api/nope`);
-  assert(nf2.headers.get("x-content-type-options") === "nosniff", "JSON headers: error responses also hardened (nosniff)");
+  assert(
+    nf2.headers.get("x-content-type-options") === "nosniff",
+    "JSON headers: error responses also hardened (nosniff)",
+  );
 
-  const statusBody = (await (await fetch(`${B}/api/auth/status`)).json()) as Record<string, unknown>;
-  assert("spotify" in statusBody && "apple" in statusBody, "shape: /api/auth/status {spotify, apple}");
+  const statusBody = (await (await fetch(`${B}/api/auth/status`)).json()) as Record<
+    string,
+    unknown
+  >;
+  assert(
+    "spotify" in statusBody && "apple" in statusBody,
+    "shape: /api/auth/status {spotify, apple}",
+  );
   const gateBody = (await (await fetch(`${B}/api/gate`)).json()) as Record<string, unknown>;
   assert("open" in gateBody && "reason" in gateBody, "shape: /api/gate {open, reason}");
   const catBody = (await (await fetch(`${B}/api/catalog`)).json()) as Record<string, unknown>;
-  assert(Array.isArray(catBody["rows"]) && "last_fetched" in catBody && "refreshing" in catBody, "shape: /api/catalog {rows, last_fetched, refreshing}");
+  assert(
+    Array.isArray(catBody["rows"]) && "last_fetched" in catBody && "refreshing" in catBody,
+    "shape: /api/catalog {rows, last_fetched, refreshing}",
+  );
   const opsBody = (await (await fetch(`${B}/api/operations`)).json()) as Record<string, unknown>;
   assert(Array.isArray(opsBody["operations"]), "shape: /api/operations {operations:[...]}");
 
   const provBody = (await (await fetch(`${B}/api/providers`)).json()) as { providers?: unknown };
   const provList = provBody.providers as Array<Record<string, unknown>> | undefined;
-  assert(Array.isArray(provList) && provList.length >= 2, `shape: /api/providers is an array (got ${provList?.length})`);
+  assert(
+    Array.isArray(provList) && provList.length >= 2,
+    `shape: /api/providers is an array (got ${provList?.length})`,
+  );
   assert(
     !!provList &&
       provList.every(
@@ -203,7 +254,10 @@ try {
       /* aborted after reading the first frame */
     }
     clearTimeout(t);
-    assert(text.includes("event: idle"), `catalog SSE: first frame is event:idle (got ${JSON.stringify(text.slice(0, 80))})`);
+    assert(
+      text.includes("event: idle"),
+      `catalog SSE: first frame is event:idle (got ${JSON.stringify(text.slice(0, 80))})`,
+    );
     assert(!/^id:/m.test(text), "catalog SSE: no id: line (transient stream, no replay)");
   }
 } finally {

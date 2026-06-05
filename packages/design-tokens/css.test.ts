@@ -22,7 +22,10 @@ const css = generateCss();
 
 // 1) No drift: the committed CSS equals the current generator output.
 const committed = readFileSync(resolve(here, "tokens.css"), "utf8");
-assert(committed === css, "tokens.css is up to date with the generator (run `npm run build -w @mtss/design-tokens`)");
+assert(
+  committed === css,
+  "tokens.css is up to date with the generator (run `npm run build -w @mtss/design-tokens`)",
+);
 
 // 2) Var superset: every --color-* used by the components is defined.
 const defined = new Set([...css.matchAll(/(--color-[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
@@ -32,7 +35,13 @@ const referenced = [...componentsCss.matchAll(/var\((--color-[a-z0-9-]+)\)/g)].m
 const referencedSet = new Set(referenced);
 const missing = [...referencedSet].filter((v) => !defined.has(v));
 
-assert(referencedSet.size > 0, `found --color-* references in components.css (got ${referencedSet.size})`);
-assert(missing.length === 0, `every --color-* used in components.css is defined by the tokens (missing: ${missing.join(", ") || "none"})`);
+assert(
+  referencedSet.size > 0,
+  `found --color-* references in components.css (got ${referencedSet.size})`,
+);
+assert(
+  missing.length === 0,
+  `every --color-* used in components.css is defined by the tokens (missing: ${missing.join(", ") || "none"})`,
+);
 
 process.exit(process.exitCode ?? 0);
