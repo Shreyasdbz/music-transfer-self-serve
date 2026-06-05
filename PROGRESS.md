@@ -1422,6 +1422,15 @@ A2 multi-user-ready seam, A3 session cookie) gate the build.
   (it would write to the user's real Apple Music — theirs to run; the transfer+SSE engine is already
   proven by Phase 7 + the V3 live-SSE smoke test). No console errors. Ledger backed up + restored
   intact (v2, 1610 tracks, integrity ok).
+- **Validation**: 5-persona adversarial workflow + synthesis (`wf_76c785e9-788`; a first run failed on
+  workflow plumbing — agents didn't emit structured output — and was re-run). Verdict: core flow,
+  API/SSE contract, and additive-only/security all clean. Findings **resolved**: HIGH — the
+  disambiguation modal had no focus trap/Escape/focus-return (added focus-on-open, Tab trap, Escape +
+  backdrop dismiss, focus return); MED — the "Transfer from/to" `<label for>` pointed at ids the
+  `<select>` lacked (replaced with group + per-field aria-labels carrying the visible text, 2.5.3);
+  regression — no mid-run reconnect-on-reload (added `resumeRunningOperation()` in `loadAll`, re-attaches
+  a running op's SSE via replay); LOW — 412 now re-polls the gate to self-heal a stale banner, and a
+  mid-run SSE drop now surfaces a "reload to resume" toast.
 - **Result**: `build:all` + `tsc` (server + web) + eslint clean, **420 PASS / 0 FAIL**. Operation
-  flow, gate gating, catalog Transfer pre-fill, and disambiguation wired. **Next**: validation, then
+  flow, gate gating, catalog Transfer pre-fill, disambiguation, and resume-on-reload wired. **Next**:
   Phase V6 — network deploy.

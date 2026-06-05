@@ -393,6 +393,11 @@ Catalog/Start; 422 disambig modal wired; **no vanilla DOM left**. The live Spoti
 triggered (writes to the user's real account — theirs to run; engine transfer+SSE proven by Phase 7 +
 the V3 live-SSE smoke). `build:all` + tsc + eslint clean, **420 PASS / 0 FAIL**.
 
+**Validation:** 5-persona workflow (`wf_76c785e9-788`) → core flow + API/SSE contract + additive-only/
+security clean. Fixed: HIGH modal a11y (focus trap/Escape/return/backdrop), MED dangling form labels
+(→ group + aria-labels), regression reconnect-on-reload (`resumeRunningOperation`), LOW 412 gate
+re-poll + mid-run-drop toast.
+
 **Invariants:** additive-only (UI calls only additive endpoints; no remove/unfavorite controls);
 auditability (History reads the ledger).
 

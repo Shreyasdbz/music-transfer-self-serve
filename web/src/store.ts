@@ -115,6 +115,18 @@ export async function loadAll(): Promise<void> {
     refreshCatalog(),
     refreshHistory(),
   ]);
+  resumeRunningOperation();
+}
+
+/** Re-attach to an operation that's still running (e.g. after a page reload).
+ * The SSE replays from seq 0, rebuilding the run state. (Resume safety — the
+ * old UI did this; the server supports it via Last-Event-ID replay.) */
+function resumeRunningOperation(): void {
+  if (run.running) return;
+  const running = history().find((o) => o.status === "running");
+  if (!running) return;
+  setRun({ id: running.id, stage: "reconnecting", counts: zeroCounts(), log: [], status: "running", running: true, logline: "" });
+  watchOperation(running.id);
 }
 
 // ── Auth popups ──────────────────────────────────────────────────────────
@@ -196,8 +208,10 @@ export async function startCatalogRefresh(): Promise<void> {
   } catch (e) {
     const status = (e as { status?: number }).status;
     setCatalogRefresh({ running: false, message: "" });
-    if (status === 412) setToast("Run the permissions check first.");
-    else setToast(`Catalog refresh failed: ${(e as Error).message}`);
+    if (status === 412) {
+      setToast("Run the permissions check first.");
+      void refreshGate(); // self-heal a stale-open gate banner
+    } else setToast(`Catalog refresh failed: ${(e as Error).message}`);
   }
 }
 export async function cancelCatalogRefresh(): Promise<void> {
@@ -256,6 +270,9 @@ function watchOperation(id: string): void {
       }
     },
     () => {
+      // A close with no terminal `done`/`interrupted` (run.status still unset)
+      // is a mid-run disconnect, not a clean finish — surface it.
+      if (run.running && !run.status) setToast("Connection interrupted — reload to resume.");
       setRun("running", false);
       void refreshHistory();
     },

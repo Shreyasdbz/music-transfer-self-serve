@@ -1,6 +1,6 @@
-import { createEffect, createMemo, createSignal, For, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { Button, Card, Dropdown } from "../components/index.js";
-import { catalog, gate, prefill, providers, run, startOperation, setToast } from "../store.js";
+import { catalog, gate, prefill, providers, refreshGate, run, startOperation, setToast } from "../store.js";
 import type { TargetInput } from "../api/client.js";
 
 type Side = "source" | "destination";
@@ -89,8 +89,10 @@ export function Operation(): JSX.Element {
       const b = res.body as { side?: Side; error?: string; candidates?: { id: string; name: string }[] };
       if (b.error === "ambiguous_name" && b.candidates) setDisambig({ side: b.side ?? "source", candidates: b.candidates });
       else setToast(`Could not resolve ${b.side ?? "target"}: ${b.error}`);
-    } else if (res.status === 412) setToast("Run the permissions check first.");
-    else if (res.status === 409) setToast("An operation is already running.");
+    } else if (res.status === 412) {
+      setToast("Run the permissions check first.");
+      void refreshGate(); // self-heal a stale-open gate banner
+    } else if (res.status === 409) setToast("An operation is already running.");
     else setToast(`Could not start the transfer (${res.status}).`);
   }
 
@@ -110,12 +112,12 @@ export function Operation(): JSX.Element {
       </h2>
       <p class="section-sub t-caption">Pick where to transfer from and to, then start. Additive only — nothing is removed.</p>
       <Card>
-        <div class="op-grid">
-          <label class="t-note" for="src-provider">
-            Transfer from
-          </label>
+        <div class="op-grid" role="group" aria-label="Transfer">
+          {/* Row labels (not bound to a single field — the aria-labels carry the
+              accessible name incl. the visible "Transfer from/to" text, 2.5.3). */}
+          <span class="t-note">Transfer from</span>
           <Dropdown
-            aria-label="Source service"
+            aria-label="Transfer from — service"
             value={srcProvider()}
             options={providerOptions()}
             onChange={(v) => {
@@ -124,17 +126,15 @@ export function Operation(): JSX.Element {
             }}
           />
           <Dropdown
-            aria-label="Source playlist"
+            aria-label="Transfer from — playlist"
             value={srcTarget()}
             options={[{ value: "", label: "Choose…" }, ...targetOptions(srcProvider(), false)]}
             onChange={setSrcTarget}
           />
 
-          <label class="t-note" for="dst-provider">
-            Transfer to
-          </label>
+          <span class="t-note">Transfer to</span>
           <Dropdown
-            aria-label="Destination service"
+            aria-label="Transfer to — service"
             value={dstProvider()}
             options={providerOptions(srcProvider())}
             onChange={(v) => {
@@ -150,12 +150,12 @@ export function Operation(): JSX.Element {
                 placeholder="New playlist name"
                 value={createName()}
                 onInput={(e) => setCreateName(e.currentTarget.value)}
-                aria-label="New playlist name"
+                aria-label="Transfer to — new playlist name"
               />
             }
           >
             <Dropdown
-              aria-label="Destination playlist"
+              aria-label="Transfer to — playlist"
               value={dstTarget()}
               options={[{ value: "", label: "Choose…" }, ...targetOptions(dstProvider(), true)]}
               onChange={setDstTarget}
@@ -176,37 +176,70 @@ export function Operation(): JSX.Element {
       </Card>
 
       <Show when={disambig()}>
-        {(d) => (
-          <div class="modal-backdrop" role="dialog" aria-modal="true" aria-label="Choose a playlist">
-            <div class="modal">
-              <h3 class="t-headline" style={{ margin: 0 }}>
-                Multiple {d().side} playlists match
-              </h3>
-              <p class="t-subtle" style={{ color: "var(--color-text-muted)" }}>
-                Pick the one you meant{d().side === "destination" ? ", or create a new one." : "."}
-              </p>
-              <ul class="modal-list">
-                <For each={d().candidates}>
-                  {(c) => (
-                    <li>
-                      <Button class="btn-block" onClick={() => pickCandidate(c.id)}>
-                        {c.name}
-                      </Button>
-                    </li>
-                  )}
-                </For>
-              </ul>
-              <div class="cluster">
-                <Show when={d().side === "destination"}>
-                  <Button variant="tier2" onClick={() => void start(true)}>
-                    Create new instead
-                  </Button>
-                </Show>
-                <Button onClick={() => setDisambig(undefined)}>Cancel</Button>
+        {(d) => {
+          let modalEl!: HTMLDivElement;
+          const previouslyFocused = document.activeElement as HTMLElement | null;
+          onMount(() => modalEl.querySelector<HTMLElement>("button")?.focus());
+          onCleanup(() => previouslyFocused?.focus()); // return focus on close
+          const focusables = (): HTMLElement[] =>
+            [...modalEl.querySelectorAll<HTMLElement>("button:not([disabled]), input, select, [href]")];
+          const onKeyDown = (e: KeyboardEvent): void => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              setDisambig(undefined);
+              return;
+            }
+            if (e.key === "Tab") {
+              const f = focusables();
+              if (f.length === 0) return;
+              const first = f[0]!;
+              const last = f[f.length - 1]!;
+              if (e.shiftKey && document.activeElement === first) {
+                e.preventDefault();
+                last.focus();
+              } else if (!e.shiftKey && document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+              }
+            }
+          };
+          return (
+            <div
+              class="modal-backdrop"
+              onClick={(e) => {
+                if (e.target === e.currentTarget) setDisambig(undefined);
+              }}
+            >
+              <div class="modal" role="dialog" aria-modal="true" aria-label="Choose a playlist" tabindex="-1" ref={modalEl} onKeyDown={onKeyDown}>
+                <h3 class="t-headline" style={{ margin: 0 }}>
+                  Multiple {d().side} playlists match
+                </h3>
+                <p class="t-subtle" style={{ color: "var(--color-text-muted)" }}>
+                  Pick the one you meant{d().side === "destination" ? ", or create a new one." : "."}
+                </p>
+                <ul class="modal-list">
+                  <For each={d().candidates}>
+                    {(c) => (
+                      <li>
+                        <Button class="btn-block" onClick={() => pickCandidate(c.id)}>
+                          {c.name}
+                        </Button>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+                <div class="cluster">
+                  <Show when={d().side === "destination"}>
+                    <Button variant="tier2" onClick={() => void start(true)}>
+                      Create new instead
+                    </Button>
+                  </Show>
+                  <Button onClick={() => setDisambig(undefined)}>Cancel</Button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        }}
       </Show>
     </section>
   );
