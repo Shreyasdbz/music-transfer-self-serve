@@ -39,8 +39,10 @@ export interface CanonicalTrack {
   readonly durationMs: number | undefined;
   /** Explicit content flag; undefined when the platform doesn't expose it. */
   readonly explicit: boolean | undefined;
-  /** Source platform — needed by the matcher to choose Tier-1 endpoints. */
-  readonly source: "spotify" | "apple";
+  /** Source platform id (a `ProviderId`, e.g. "spotify" | "apple" | "youtube").
+   * Typed `string` to avoid an import cycle with providers/types; the matcher
+   * and cache key off it. */
+  readonly source: string;
   /** Source-side identifier for the ledger cache. */
   readonly sourceId: string;
 }

@@ -1,7 +1,10 @@
 // Shared Operation types (blueprint §8 / §9). Kept separate so the runner and
 // the HTTP routes both depend on this, not on each other.
 
-export type Platform = "spotify" | "apple";
+/** A platform id. Was the closed union `"spotify" | "apple"`; widened to a
+ * `ProviderId` (string) in v2 so a third provider needs no edit here. Routes
+ * still validate against the registered providers. */
+export type Platform = string;
 
 export type ResolvedTarget =
   | { kind: "liked" | "favorites" }

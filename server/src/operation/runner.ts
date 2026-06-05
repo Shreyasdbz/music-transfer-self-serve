@@ -120,7 +120,7 @@ export function startOperation(spec: OperationSpec): OperationHandle {
           continue;
         }
         if (spec.rematch) deps.deleteCache(s);
-        const result = await deps.match(s, !spec.rematch);
+        const result = await deps.match(s, !spec.rematch, spec.destination);
         if (result.tier === "unmatched" || !result.destination) {
           summary.unmatched += 1;
           emit("unmatched", {
@@ -261,7 +261,7 @@ async function writeOneWithRevalidation(
       // Invalidate that one cache row, re-resolve live, retry once.
       deps.deleteCache(x.source);
       try {
-        const re = await deps.match(x.source, false);
+        const re = await deps.match(x.source, false, spec.destination);
         if (re.tier !== "unmatched" && re.destination) {
           const newId = re.destination.id;
           emit("match", { source_id: x.source.sourceId, dest_id: newId, tier: re.tier, confidence: re.confidence, from_cache: false, revalidated: true });

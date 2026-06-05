@@ -9,6 +9,7 @@ import { registerAuthRoutes } from "./http/routes_auth.js";
 import { registerPreflightRoutes } from "./http/routes_preflight.js";
 import { registerCatalogRoutes } from "./http/routes_catalog.js";
 import { registerOperationsRoutes } from "./http/routes_operations.js";
+import { registerBuiltInProviders } from "./providers/index.js";
 import { installAuthFailureSink } from "./preflight/gate.js";
 import { stopStateSweeper } from "./auth/spotify.js";
 import { stopNonceSweeper } from "./auth/apple.js";
@@ -16,6 +17,7 @@ import { log } from "./util/log.js";
 
 async function main(): Promise<void> {
   openLedger();
+  registerBuiltInProviders(); // register Spotify + Apple in the provider registry
   installAuthFailureSink(); // wire util/http 401/403-scope → gate auto-invalidation
   registerAuthRoutes();
   registerPreflightRoutes();

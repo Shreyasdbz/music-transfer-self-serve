@@ -24,7 +24,8 @@ import {
   searchByIsrc,
   clearStorefrontCache,
 } from "../clients/apple.js";
-import { appleCatalogToCanonical, isValidatedCandidate } from "../match/matcher.js";
+import { isValidatedCandidate } from "../match/matcher.js";
+import { appleCatalogToCanonical } from "../providers/apple/provider.js";
 
 export type CheckName =
   | "env"
