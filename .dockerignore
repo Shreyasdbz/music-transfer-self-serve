@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+**/dist
+server/data
+server/secrets
+**/.env
+*.p8
+.git
+.github
+.playwright-mcp
+v[0-9]*-*.png
+mockups
+*.tsbuildinfo

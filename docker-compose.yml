@@ -1,0 +1,24 @@
+# Self-host the tool in one container. Put an HTTPS reverse proxy (Caddy,
+# nginx, Traefik) in front — see DEPLOY.md. The container is published only on
+# the host loopback; the proxy terminates TLS and forwards here.
+
+services:
+  app:
+    build: .
+    # Host loopback → container. Your reverse proxy forwards to 127.0.0.1:8888.
+    ports:
+      - "127.0.0.1:8888:8888"
+    environment:
+      # Listen on all interfaces INSIDE the container (the port map is loopback-only).
+      - BIND_HOST=0.0.0.0
+    # All secrets + the network config (PUBLIC_ORIGIN, ALLOWED_ORIGINS,
+    # ALLOWED_HOSTS, INSTANCE_ACCESS_TOKEN, SESSION_SECRET, Spotify/Apple keys)
+    # come from .env — never baked into the image. See .env.example.
+    env_file:
+      - .env
+    volumes:
+      # Persistent ledger + tokens (gitignored on the host).
+      - ./server/data:/app/server/data
+      # The Apple .p8 key, read-only.
+      - ./server/secrets:/app/server/secrets:ro
+    restart: unless-stopped

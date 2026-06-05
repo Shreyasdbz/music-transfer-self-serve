@@ -1434,3 +1434,39 @@ A2 multi-user-ready seam, A3 session cookie) gate the build.
 - **Result**: `build:all` + `tsc` (server + web) + eslint clean, **420 PASS / 0 FAIL**. Operation
   flow, gate gating, catalog Transfer pre-fill, disambiguation, and resume-on-reload wired. **Next**:
   Phase V6 — network deploy.
+
+## 2026-06-05 — Phase V6: network deploy (env-config + access seam + Docker) — branch `v2/network-deploy`
+
+- **Goal**: realize the §15 A1 (network-deployable replaces loopback-only) + A3 (one signed session
+  cookie) amendments as working self-host support, without regressing the local loopback default.
+- **Config** (`server/src/config.ts`): env-driven — `BIND_HOST` (default `127.0.0.1`), `PORT`
+  (validated 1–65535), `PUBLIC_ORIGIN` (default `http://127.0.0.1:8888`, trailing-slash-stripped),
+  `ALLOWED_ORIGINS`/`ALLOWED_HOSTS` (CSV, default derived from `PUBLIC_ORIGIN`), `INSTANCE_ACCESS_TOKEN`
+  (empty = open), `SESSION_SECRET` (default random per start). `SPOTIFY_REDIRECT_URI_EXPECTED` derives
+  from `PUBLIC_ORIGIN`. With no env set, every value equals the v1 loopback constant — no regression.
+- **Access seam** (`server/src/http/session.ts`, new): when `INSTANCE_ACCESS_TOKEN` is set, `/api/*`
+  (except `/api/session`,`/api/health`,`/api/csrf`) requires a signed cookie `mtss_session` =
+  `base64url({userId,iat})` + HMAC-SHA256(`SESSION_SECRET`); `HttpOnly`/`Secure`(scheme-aware)/
+  `SameSite=Strict`, 30-day; carries only `{userId:"__owner__"}` — secretless. Token compared
+  constant-time. `app.ts`: Host/Origin allowlist checks + constant-time CSRF compare + `sessionGate`.
+  Web: `App.tsx` Login gate + Log-out control, `store.ts`/`client.ts` session/login/logout + a shared
+  401 → re-login handler.
+- **Deploy artifacts**: multi-stage `Dockerfile` (builds web, serves `web/dist`+API one Node process,
+  better-sqlite3 ABI-matched), `docker-compose.yml` (loopback-published, `BIND_HOST=0.0.0.0` inside,
+  `env_file .env`, data + `secrets:ro` volumes), `.dockerignore`, `DEPLOY.md` (reverse-proxy/HTTPS,
+  Spotify 5-user dev cap + redirect-URI, Apple-MusicKit-HTTPS call-outs), `.env.example` network/access
+  keys (blank/commented). `.gitignore`: added `.claude/`.
+- **Spec**: blueprint §15 — added the V6 implementation row (realizes A1+A3); A1/A2/A3 rows already
+  landed in V0.
+- **Validation**: 5-persona adversarial workflow + synthesis (`wf_8af86f5a-b00`). Findings **resolved**:
+  BLOCKER — cookie `secure:true` was hardcoded → un-loginable on HTTP/loopback-with-token; now
+  `secure = PUBLIC_ORIGIN.startsWith("https://")`. HIGH — CSRF compared with `!==` (timing leak) →
+  `timingSafeEqual` via `csrfOk()`. MED — DEPLOY.md non-Docker cmd skipped the server typecheck
+  (`build:web`→`build:all`); no logout affordance (added); no 401 recovery (added shared handler →
+  re-shows Login + toast). LOW — `PORT` unvalidated (added range check); Login had no field-linked
+  error region / input-reset (added `role="alert"` StatusPill, clears+refocuses). A focused re-verify
+  agent confirmed all 7 fixes correct with no new issues + no loopback regression.
+- **Result**: `build:all` + `tsc` (server + web) clean, **398 PASS / 0 FAIL** + 31 WCAG-AA contrast
+  pairs pass; secrets audit clean (only the fake `.env.example` placeholder matched). Default env still
+  loopback + no login. **Owner does the real deploy** (no new credential, so no pause point). **Next**:
+  Phase V7 — YouTube Music provider (final).

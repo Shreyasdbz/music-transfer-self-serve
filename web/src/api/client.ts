@@ -141,6 +141,9 @@ async function safeJson(r: Response): Promise<unknown> {
 }
 
 export const api = {
+  session: () => getJson<{ required: boolean; authenticated: boolean }>("/api/session"),
+  login: (token: string) => postJson<{ ok: boolean }>("/api/session", { token }),
+  logout: () => postJson<{ ok: boolean }>("/api/session/logout"),
   authStatus: () => getJson<AuthStatus>("/api/auth/status"),
   providers: () => getJson<{ providers: Provider[] }>("/api/providers").then((r) => r.providers),
   gate: () => getJson<GateState>("/api/gate"),

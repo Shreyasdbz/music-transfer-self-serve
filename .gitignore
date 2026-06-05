@@ -23,6 +23,9 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 
+# ── Agent runtime state (Claude Code) ──────────────────────────────────
+.claude/
+
 # Playwright / test screenshots
 .playwright-mcp/
 v[0-9]*-*.png

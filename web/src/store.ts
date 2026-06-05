@@ -31,6 +31,58 @@ export const [catalog, setCatalog] = createSignal<CatalogResponse | null>(null);
 export const [history, setHistory] = createSignal<Operation[]>([]);
 export const [toast, setToast] = createSignal<string>("");
 
+// Access seam (§15 A3): when the instance requires a token, gate the app behind
+// a login screen until authenticated. Defaults to open (local single-owner).
+export interface SessionState {
+  required: boolean;
+  authenticated: boolean;
+  checked: boolean;
+}
+export const [session, setSession] = createStore<SessionState>({ required: false, authenticated: true, checked: false });
+
+export async function checkSession(): Promise<void> {
+  try {
+    const s = await api.session();
+    setSession({ required: s.required, authenticated: s.authenticated, checked: true });
+  } catch {
+    setSession({ required: false, authenticated: true, checked: true });
+  }
+}
+
+export async function submitAccessToken(token: string): Promise<boolean> {
+  try {
+    await api.login(token);
+    setSession("authenticated", true);
+    await loadAll();
+    return true;
+  } catch {
+    setToast("Invalid access token.");
+    return false;
+  }
+}
+
+export async function logout(): Promise<void> {
+  try {
+    await api.logout();
+  } catch {
+    /* clear locally regardless */
+  }
+  setSession("authenticated", false);
+}
+
+/** Shared 401 handler: an expired/invalid session makes every /api/* call 401.
+ * When the instance requires auth, flip the gate back to the Login screen
+ * (App.tsx re-renders on `session.authenticated`) and toast once. Returns true
+ * if the error was a 401 we handled. */
+function handleAuthError(e: unknown): boolean {
+  if ((e as { status?: number }).status !== 401 || !session.required) return false;
+  if (session.authenticated) {
+    setSession("authenticated", false);
+    setToast("Session expired — please log in again.");
+  }
+  return true;
+}
+
 /** A catalog "Transfer" click pre-fills the Operation form's source side. */
 export interface Prefill {
   provider: string;
@@ -81,29 +133,29 @@ const LOG_CAP = 500;
 export async function refreshAuth(): Promise<void> {
   try {
     setAuthStatus(await api.authStatus());
-  } catch {
-    /* leave prior */
+  } catch (e) {
+    handleAuthError(e); // else leave prior
   }
 }
 export async function refreshGate(): Promise<void> {
   try {
     setGate(await api.gate());
-  } catch {
-    /* leave prior */
+  } catch (e) {
+    handleAuthError(e);
   }
 }
 export async function refreshCatalog(): Promise<void> {
   try {
     setCatalog(await api.catalog());
-  } catch {
-    /* leave prior */
+  } catch (e) {
+    handleAuthError(e);
   }
 }
 export async function refreshHistory(): Promise<void> {
   try {
     setHistory(await api.operations());
-  } catch {
-    /* leave prior */
+  } catch (e) {
+    handleAuthError(e);
   }
 }
 
