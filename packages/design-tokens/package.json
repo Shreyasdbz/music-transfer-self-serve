@@ -3,10 +3,14 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Design tokens (Figma → light + derived dark) — single source of truth for the UI. Populated in phase V4.",
+  "description": "Design tokens (Figma → light + derived dark) — single source of truth for the UI.",
   "main": "tokens.ts",
   "exports": {
     ".": "./tokens.ts",
     "./tokens.css": "./tokens.css"
+  },
+  "scripts": {
+    "build": "tsx build.ts",
+    "test": "tsx contrast.test.ts"
   }
 }

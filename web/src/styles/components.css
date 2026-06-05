@@ -1,0 +1,205 @@
+/* Component styles — built ENTIRELY from design tokens (CSS custom properties
+ * from @mtss/design-tokens). No literal colors here; everything themes via the
+ * --color-* variables so light/dark/auto switch with zero component changes. */
+
+/* ── Card ─────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  padding: var(--space-card-y) var(--space-card-x);
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  padding: 0.6em 1.1em;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, opacity 120ms ease;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.btn:disabled {
+  cursor: not-allowed;
+}
+
+.btn-tier1 {
+  background: var(--color-btn1-bg);
+  border-color: var(--color-btn1-border);
+  color: var(--color-btn1-text);
+}
+.btn-tier1:hover:not(:disabled) {
+  background: var(--color-btn1-bg-hover);
+}
+.btn-tier1:disabled {
+  color: var(--color-text-muted);
+  opacity: 0.6;
+}
+
+.btn-tier2 {
+  background: var(--color-btn2-bg);
+  color: var(--color-btn2-text);
+}
+.btn-tier2:hover:not(:disabled) {
+  background: var(--color-btn2-bg-hover);
+}
+.btn-tier2:disabled {
+  background: var(--color-btn2-disabled);
+  color: var(--color-surface);
+}
+
+.btn-sm {
+  padding: 0.4em 0.8em;
+}
+
+/* ── Status pills ─────────────────────────────────────────────────────── */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  border-radius: var(--radius-pill);
+  padding: 0.25em 0.75em;
+  border: 1px solid transparent;
+}
+.pill-success {
+  background: var(--color-status-success);
+  color: var(--color-status-text);
+}
+.pill-warning {
+  background: var(--color-status-warning);
+  color: var(--color-status-text);
+}
+.pill-error {
+  background: var(--color-status-error);
+  color: var(--color-status-text);
+}
+.pill-general {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+.pill-glyph {
+  width: 0.85em;
+  height: 0.85em;
+  display: inline-block;
+}
+
+/* ── Status dot (connected / idle indicator) ─────────────────────────── */
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  flex: none;
+}
+.status-dot[data-state="on"] {
+  background: var(--color-status-success);
+}
+.status-dot[data-state="off"] {
+  background: var(--color-text-muted);
+}
+.status-dot[data-state="error"] {
+  background: var(--color-status-error);
+}
+
+/* ── Permission / connection row ──────────────────────────────────────── */
+.row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: var(--space-sm) var(--space-md);
+}
+.row-label {
+  color: var(--color-text);
+  margin-right: auto;
+}
+.app-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: var(--color-status-text);
+}
+
+/* ── Dropdown (native select, tokenized) ─────────────────────────────── */
+.dropdown {
+  appearance: none;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  padding: 0.55em 2.2em 0.55em 0.9em;
+  background-image: linear-gradient(45deg, transparent 50%, var(--color-text-muted) 50%),
+    linear-gradient(135deg, var(--color-text-muted) 50%, transparent 50%);
+  background-position: right 1em top 55%, right 0.65em top 55%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
+/* ── Collapsible ──────────────────────────────────────────────────────── */
+.collapsible {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.collapsible-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  width: 100%;
+  padding: var(--space-md) var(--space-lg);
+  background: transparent;
+  border: 0;
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: left;
+}
+.collapsible-title {
+  margin-right: auto;
+}
+.collapsible-chevron {
+  transition: transform 150ms ease;
+  color: var(--color-text-muted);
+}
+.collapsible[data-open="true"] .collapsible-chevron {
+  transform: rotate(180deg);
+}
+.collapsible-body {
+  padding: 0 var(--space-lg) var(--space-lg);
+}
+
+/* ── Theme toggle (segmented) ─────────────────────────────────────────── */
+.theme-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+}
+.theme-toggle button {
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  border-radius: var(--radius-pill);
+  padding: 0.3em 0.8em;
+  cursor: pointer;
+}
+.theme-toggle button[aria-pressed="true"] {
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--shadow-1);
+}

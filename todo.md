@@ -330,30 +330,29 @@ coverage — **added** route/header/413/SSE tests + ledger isolation; stricter b
 
 **Goal:** Figma tokens + Solid primitives + theming + a11y. No ad-hoc styling anywhere.
 
-- [ ] `packages/design-tokens/tokens.ts`:
-  - [ ] **Light** palette from `Figma_Colors.png` (bg-primary #F8F8F8, bg-secondary #fff,
-        fg-primary #000, fg-secondary #222426, fg-status #fff, gray-0..4, card-stroke #E8E8E8,
-        fg-btn-1-rest #F5F5F5 / hover #FFFFFF, fg-btn-2-rest #000 / hover #1A1A1A,
-        status-success #34C759, status-warn #FFCC00, status-error #FF383C).
-  - [ ] **Derive dark** palette against measured WCAG-AA contrast (not eyeballed); re-tune status
-        colors for dark bg.
-  - [ ] **Type scale** from `Figma_Typography.png` — Inter (Title 56/ExtraBold/-4%, Heading
-        32/Bold/-4%, Subheading 24/Medium/-4%, Headline 24/Medium/-4%, Body 20/Regular/-4%,
-        Caption 18/Light/0%, Note 16/Medium/-4%, Subtle 14/Regular/-4%); JetBrains Mono (Button
-        16/Medium/-4%, Button2 18/Medium/-4%, Status 14/Medium/-4%, Logline 10/Regular/-2%).
-  - [ ] Space/radius/shadow tokens (Card: 40px h / 30px v padding, `shadow-1`).
-- [ ] `tokens.css` — emit CSS custom properties (`:root` + `[data-theme=dark]`). Load Inter +
-      JetBrains Mono (self-hosted for offline/privacy).
-- [ ] Solid primitives from `Figma_Components.png`: `Card`, `Button` (tier-1 outline + tier-2
-      filled; rest/hover/disabled), `StatusPill` (Success/Warning/Error/General),
-      `PermissionRow` (icon + label + status-dot + Check button), `Dropdown`, `Collapsible`.
-- [ ] `web/src/theme/ThemeProvider.tsx` + `useTheme` — light/dark/**auto**(`prefers-color-scheme`),
-      persisted to `localStorage`.
-- [ ] A11y baseline: keyboard nav, `:focus-visible`, ARIA roles/labels, `prefers-reduced-motion`.
+- [x] `packages/design-tokens/tokens.ts` — single source: Figma **light** palette verbatim;
+      **derived dark** palette (measured WCAG-AA, not eyeballed); the Inter + JetBrains Mono **type
+      scale** (12 roles); space/radius/shadow (Card 40×30, `shadow-1`). + a `contrastRatio` util.
+- [x] `build.ts` generates `tokens.css` (`:root` light + `[data-theme=dark]` + `prefers-color-scheme`
+      fallback for "auto" + focus-visible + reduced-motion + `.t-*` type classes). Single source →
+      never hand-edit the CSS.
+- [x] Self-hosted fonts via `@fontsource-variable/{inter,jetbrains-mono}` (no runtime CDN).
+- [x] Solid primitives (`web/src/components`): `Card`, `Button` (tier-1 outline + tier-2 filled,
+      rest/hover/disabled; tier-2 inverts in dark), `StatusPill` (success/warning/error/general),
+      `StatusDot`, `PermissionRow` (icon+label+dot+Check), `Dropdown` (native select), `Collapsible`,
+      `ThemeToggle`. All tokens-only (no hex — grep-checked).
+- [x] `ThemeProvider`/`useTheme` — light/dark/**auto**(`prefers-color-scheme`), persisted to
+      `localStorage`, drives `[data-theme]`.
+- [x] A11y: keyboard nav (native controls), `:focus-visible` ring, ARIA (`aria-expanded`/
+      `aria-pressed`/`aria-label`/`role=img`), `prefers-reduced-motion`. Verified live via Playwright.
 
-**AC:** components render from tokens only (grep/lint: no ad-hoc hex in component code);
-light/dark/auto switch works + persists; **WCAG AA** verified for all text/status pairs incl. derived
-dark; keyboard nav + focus-visible + ARIA on Button/PermissionRow/Dropdown; reduced-motion honored.
+**AC:** ✅ components render from tokens only (no ad-hoc hex); light/dark/auto switch + persist;
+**WCAG AA verified for all 29 text/status/focus pairs in BOTH themes** (`contrast.test.ts`, in CI);
+keyboard nav + focus-visible + ARIA + reduced-motion. Visual: screenshotted light + dark via
+Playwright — matches Figma. **build:all + tsc clean · 417 PASS / 0 FAIL.**
+
+**a11y refinement (logged):** the mockup's white pill text fails AA on the bright Figma colors
+(2.2/1.5/3.6:1) → kept the fills, used dark pill text (7.8/11.5/4.9:1), AA in both themes.
 
 **Invariants:** none touched (pure UI); truthfulness — status pills reflect real engine state.
 

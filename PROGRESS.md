@@ -1355,3 +1355,32 @@ A2 multi-user-ready seam, A3 session cookie) gate the build.
   verified clean post-suite (schema_version=2, 1610 tracks, 3220 backfilled provider refs, integrity
   ok, **zero test pollution**). **Next**: Phase V4 — design system (Figma tokens + Solid primitives +
   theming + a11y).
+
+### 2026-06-05 — Phase V4: design system (branch `v2/design-system`)
+
+- **Start**: encode the Figma design system as swappable tokens + Solid primitives with light/dark/
+  auto theming and full a11y — the foundation the V5 UI is built from.
+- **Decisions**:
+  - `packages/design-tokens/tokens.ts` is the single source: the Figma **light** palette verbatim, a
+    **derived dark** palette, the Inter + JetBrains Mono type scale (12 roles), and space/radius/
+    shadow. `build.ts` generates `tokens.css` (`:root` light + `[data-theme=dark]` + a
+    `prefers-color-scheme` fallback for "auto" + focus-visible + reduced-motion + type utility
+    classes). Components consume **only** the emitted CSS vars/classes — no literal hex (grep-checked).
+  - **a11y refinement (logged)**: the mockup shows white text on the bright status pills, but white
+    fails WCAG AA on all three Figma colors (2.2 / 1.5 / 3.6 :1). Kept the Figma fills, switched to
+    **dark pill text** (7.8 / 11.5 / 4.9 :1) — AA-compliant in both themes.
+  - Self-hosted fonts via `@fontsource-variable/{inter,jetbrains-mono}` (no runtime CDN — privacy).
+    Solid primitives: `Card`, `Button` (tier-1 outline / tier-2 filled, rest/hover/disabled; tier-2
+    inverts in dark), `StatusPill`, `StatusDot`, `PermissionRow`, `Dropdown` (native select),
+    `Collapsible`, `ThemeToggle`. `ThemeProvider`/`useTheme` (light/dark/auto, persisted, drives
+    `[data-theme]`).
+- **Verification**: `contrast.test.ts` asserts **WCAG AA for all 29 text/status/focus pairs in BOTH
+  themes** (wired into the root `test`). **Visual**: rendered the showcase via Vite + Playwright and
+  screenshotted light + dark — type scale, Card/buttons/pills/rows/dropdown/collapsible all correct;
+  tier-2 inverts cleanly in dark. **a11y checked live**: `aria-expanded`/`aria-pressed`/`aria-label`/
+  `role=img` wired, native keyboard-reachable controls, focus-visible ring, reduced-motion rule.
+- **Result**: **AC met.** Components render from tokens only (no ad-hoc hex); light/dark/auto switch +
+  persist; WCAG AA verified (light+dark); keyboard nav + focus-visible + ARIA + reduced-motion. New
+  deps: `@fontsource-variable/inter`, `@fontsource-variable/jetbrains-mono` (web). `build:all` +
+  `tsc` clean, **417 PASS / 0 FAIL** (386 server + 31 contrast). **Next**: Phase V5 — Solid UI (the
+  seven home sections wired to the API).
