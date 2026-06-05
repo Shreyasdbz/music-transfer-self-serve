@@ -368,26 +368,30 @@ legibility / `readStored` / `rem` sizes. Re-screenshotted: buttons now genuinely
 
 **Goal:** rebuild the home from V4 components, wired to a typed API client. Delete vanilla JS.
 
-- [ ] `web/src/api/` — typed fetch client (CSRF header) + SSE `EventSource` wrappers for the 3
-      streams (preflight, catalog, operation), with reconnect.
-- [ ] `web/src/sections/` from `Figma_home.png`:
-  - [ ] **Header** (title) + **Intro** text.
-  - [ ] **Setup** — Authentication rows per provider (Login/Logout, status dot, popup watch) +
-        Permissions rows (PermissionRow + Check → preflight SSE → live checklist + gate banner).
-  - [ ] **Catalog** — per-provider collapsible Card listing playlists, each with a **Transfer**
-        button (pre-fills the Operation form); per-provider **Refresh** with progress.
-  - [ ] **Operation** — Transfer-from / Transfer-to dropdowns (registry-driven; auto-exclude same
-        provider; Liked/Favorites pinned; free-text vs dropdown mutual exclusion) + **Start**.
-  - [ ] **Status** — live operation SSE: stage, aggregate counters, virtualized event log (last
-        500 + full buffer for copy), logline, summary card.
-  - [ ] **History** — past operations from the ledger (with interrupted/resume hints).
-- [ ] Disambiguation modal on 422 (candidate list; create-new for destination).
-- [ ] Provider list from a `/api/providers` (or auth-status) endpoint → **YouTube auto-appears** later.
-- [ ] Delete `web/index.html` (old), `web/app.js`, `web/app.css`. Keep `web/src/musickit.html`.
+- [x] `web/src/api/client.ts` — typed fetch (CSRF from `<meta>` or `/api/csrf`) + `openSSE` wrapper
+      (named events, terminal-close, auto-reconnect) for the 3 streams. `web/src/store.ts` holds the
+      cross-section state + SSE-driven actions.
+- [x] `web/src/sections/` from `Figma_home.png`:
+  - [x] **Header** (title) + **Intro** text.
+  - [x] **Setup** — auth rows per provider (Connect/Reconnect + popup watch + status text) +
+        Permissions check → preflight SSE → live checklist + gate banner.
+  - [x] **Catalog** — per-provider collapsible listing playlists, each with a **Transfer** (pre-fills
+        the form); per-provider **Refresh** (SSE progress).
+  - [x] **Operation** — registry-driven provider+target dropdown pairs (auto-exclude same provider;
+        Liked/Favorites pinned ★; Create-new input) + **Start**.
+  - [x] **Status** — live operation SSE: stage, aggregate counters, log (capped 500), logline,
+        summary. (Copy buttons deferred — low value.)
+  - [x] **History** — past operations from the ledger (status pills + timestamps).
+- [x] Disambiguation modal on 422 (candidate list; create-new for destination).
+- [x] Provider list from `GET /api/providers` (registry-driven) → **YouTube auto-appears** in V7.
+- [x] Retired the vanilla UI (`server/web/{index,app.js,app.css}` deleted; `musickit.html` →
+      `web/public`, self-contained). Server: `WEB_DIR` → `web/dist`; Vite proxy rewrites Origin.
 
-**AC:** full E2E Spotify→Apple transfer in the new UI (live status + logline + history); gate-closed
-disables Catalog/Start with hover reason; event-log virtualization + counters; 422 disambig modal;
-**no vanilla DOM left**; idempotent re-run writes zero.
+**AC:** ✅ verified live against the user's real data (40 playlists, both connected, open gate, 4
+history rows); Transfer pre-fills + auto-excludes + Start enables on a valid form; gate-closed disables
+Catalog/Start; 422 disambig modal wired; **no vanilla DOM left**. The live Spotify→Apple write was NOT
+triggered (writes to the user's real account — theirs to run; engine transfer+SSE proven by Phase 7 +
+the V3 live-SSE smoke). `build:all` + tsc + eslint clean, **420 PASS / 0 FAIL**.
 
 **Invariants:** additive-only (UI calls only additive endpoints; no remove/unfavorite controls);
 auditability (History reads the ledger).

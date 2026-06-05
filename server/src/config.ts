@@ -11,7 +11,10 @@ loadDotenv();
 const ROOT = resolve(import.meta.dirname, "..");
 export const DATA_DIR = resolve(ROOT, "data");
 export const SECRETS_DIR = resolve(ROOT, "secrets");
-export const WEB_DIR = resolve(ROOT, "web");
+// The built Vite+Solid client (../web/dist relative to server/). In dev the
+// client is served by Vite (which proxies /api + /auth here); in prod Hono
+// serves this directory. Run `npm run build:web` to produce it.
+export const WEB_DIR = resolve(ROOT, "..", "web", "dist");
 export const LEDGER_PATH = resolve(DATA_DIR, "ledger.sqlite");
 export const TOKENS_PATH = resolve(DATA_DIR, "tokens.json");
 

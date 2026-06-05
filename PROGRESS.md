@@ -1395,3 +1395,33 @@ A2 multi-user-ready seam, A3 session cookie) gate the build.
   deps: `@fontsource-variable/inter`, `@fontsource-variable/jetbrains-mono` (web). `build:all` +
   `tsc` clean, **420 PASS / 0 FAIL** (386 server + 34 token tests). **Next**: Phase V5 — Solid UI (the
   seven home sections wired to the API).
+
+### 2026-06-05 — Phase V5: Solid home UI (branch `v2/solid-ui`)
+
+- **Start**: build the real home (Figma_home.png) from the V4 primitives, wired to the Hono API with
+  live SSE, and retire the vanilla UI.
+- **Decisions**:
+  - `web/src/api/client.ts`: typed fetch (CSRF from `<meta>` or `/api/csrf`) + `openSSE` wrapper
+    (named events, terminal-close, auto-reconnect). `web/src/store.ts`: signals/stores + SSE-driven
+    actions (auth, gate, preflight, catalog refresh, operation run, history) so cross-section state
+    stays coherent. Sections: `Header`/`Setup` (auth rows + permissions check → live checklist + gate
+    banner), `Catalog` (per-provider collapsibles, playlists + Transfer pre-fill), `Operation`
+    (registry-driven provider+target dropdown pairs, auto-exclude, Create-new, 422 disambiguation
+    modal), `Status` (live run: stage, counters, log, summary), `History` (past ops). All from design
+    tokens.
+  - Server: `GET /api/csrf` (SPA reads the token in dev where Vite serves the HTML) + `GET /api/providers`
+    (registry-driven, so YouTube appears automatically in V7). `WEB_DIR` → `../web/dist` (Hono serves
+    the built Solid app in prod; Vite serves it in dev and proxies `/api`+`/auth`). Vite proxy rewrites
+    `Origin` → the server's expected value so §11.0 Host+Origin+CSRF pass through the dev split.
+  - Retired the vanilla UI (`server/web/{index,app.js,app.css}` deleted; `musickit.html` → `web/public`,
+    self-contained with the CSRF fallback). No vanilla DOM left.
+- **Verification (live)**: ran the Hono server + Vite + Playwright against the user's real data: the
+  home renders auth (both Connected), the open gate banner, **40 real playlists** with Transfer, 4
+  history rows with status pills; clicking a playlist's Transfer pre-filled the source (Baraat 🐎),
+  auto-excluded the destination, and selecting a destination **enabled Start**. Did NOT click Start
+  (it would write to the user's real Apple Music — theirs to run; the transfer+SSE engine is already
+  proven by Phase 7 + the V3 live-SSE smoke test). No console errors. Ledger backed up + restored
+  intact (v2, 1610 tracks, integrity ok).
+- **Result**: `build:all` + `tsc` (server + web) + eslint clean, **420 PASS / 0 FAIL**. Operation
+  flow, gate gating, catalog Transfer pre-fill, and disambiguation wired. **Next**: validation, then
+  Phase V6 — network deploy.

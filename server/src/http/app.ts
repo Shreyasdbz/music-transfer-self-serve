@@ -5,6 +5,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HTTP_HOST_HEADER, HTTP_ORIGIN } from "../config.js";
+import { listProviders } from "../providers/registry.js";
 import { err } from "./respond.js";
 import { serveStaticFile } from "./static.js";
 import { registerAuthRoutes } from "./routes_auth.js";
@@ -55,6 +56,25 @@ export function buildApp(csrfToken: string): Hono {
   // 3) Health (Phase 1 AC fixtures: liveness + CSRF/Origin enforcement check).
   app.get("/api/health", (c) => c.json({ ok: true }));
   app.post("/api/health", (c) => c.json({ ok: true, method: "post" }));
+
+  // CSRF token endpoint — lets the SPA read the per-server-start token in DEV,
+  // where Vite (not Hono) serves index.html so the <meta> injection isn't there.
+  // Same-origin only (no CORS headers), so a cross-origin page can't read it.
+  app.get("/api/csrf", (c) => c.json({ csrfToken }));
+
+  // Registry-driven provider list, so the UI's dropdowns/rows aren't hardcoded
+  // (YouTube appears automatically once its provider registers in V7).
+  app.get("/api/providers", (c) =>
+    c.json({
+      providers: listProviders().map((p) => ({
+        id: p.id,
+        displayName: p.displayName,
+        likedKind: p.capabilities.likedKind,
+        supportsIsrc: p.capabilities.supportsIsrc,
+        likedReadable: p.capabilities.likedReadable,
+      })),
+    }),
+  );
 
   // 4) Route modules.
   registerAuthRoutes(app);

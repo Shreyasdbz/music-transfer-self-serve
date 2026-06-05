@@ -2,6 +2,7 @@ import "@fontsource-variable/inter";
 import "@fontsource-variable/jetbrains-mono";
 import "@mtss/design-tokens/tokens.css";
 import "./styles/components.css";
+import "./styles/sections.css";
 
 import { render } from "solid-js/web";
 import { ThemeProvider } from "./theme/ThemeProvider.js";

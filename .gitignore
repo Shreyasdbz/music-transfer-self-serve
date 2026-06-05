@@ -25,4 +25,4 @@ Thumbs.db
 
 # Playwright / test screenshots
 .playwright-mcp/
-v4-*.png
+v[0-9]*-*.png

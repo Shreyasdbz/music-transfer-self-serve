@@ -9,8 +9,20 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": { target: "http://127.0.0.1:8888", changeOrigin: true },
-      "/auth": { target: "http://127.0.0.1:8888", changeOrigin: true },
+      // changeOrigin rewrites the Host header to the target; `headers.Origin`
+      // forces the Origin to the server's expected value so the §11.0
+      // Host+Origin+CSRF checks pass through the dev proxy (the page is served
+      // from :5173 but the API lives on :8888).
+      "/api": {
+        target: "http://127.0.0.1:8888",
+        changeOrigin: true,
+        headers: { Origin: "http://127.0.0.1:8888" },
+      },
+      "/auth": {
+        target: "http://127.0.0.1:8888",
+        changeOrigin: true,
+        headers: { Origin: "http://127.0.0.1:8888" },
+      },
     },
   },
   build: {
