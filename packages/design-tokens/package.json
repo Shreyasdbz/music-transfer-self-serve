@@ -11,6 +11,6 @@
   },
   "scripts": {
     "build": "tsx build.ts",
-    "test": "tsx contrast.test.ts"
+    "test": "tsx contrast.test.ts && tsx css.test.ts"
   }
 }

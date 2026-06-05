@@ -51,7 +51,7 @@
 }
 .btn-tier2:disabled {
   background: var(--color-btn2-disabled);
-  color: var(--color-surface);
+  color: var(--color-text-muted);
 }
 
 .btn-sm {
@@ -96,6 +96,10 @@
   height: 10px;
   border-radius: var(--radius-pill);
   flex: none;
+  /* A ring gives the dot a ≥3:1 boundary vs the surface (WCAG 1.4.11) — the
+   * bright "on" green is only 2.2:1 against white on its own. text-muted is
+   * AA-tested against both bg and surface. */
+  border: 1px solid var(--color-text-muted);
 }
 .status-dot[data-state="on"] {
   background: var(--color-status-success);
@@ -120,6 +124,14 @@
 .row-label {
   color: var(--color-text);
   margin-right: auto;
+}
+.row-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+.row-state-text {
+  color: var(--color-text-muted);
 }
 .app-icon {
   width: 28px;

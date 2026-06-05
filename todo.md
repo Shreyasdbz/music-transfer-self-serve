@@ -354,6 +354,12 @@ Playwright — matches Figma. **build:all + tsc clean · 417 PASS / 0 FAIL.**
 **a11y refinement (logged):** the mockup's white pill text fails AA on the bright Figma colors
 (2.2/1.5/3.6:1) → kept the fills, used dark pill text (7.8/11.5/4.9:1), AA in both themes.
 
+**Validation:** 5-persona workflow (`wf_cfb7f849-d54`) → 1 BLOCKER (a `kebab()` regex bug made all 8
+button CSS vars dead → buttons rendered unstyled but *looked* like buttons in the screenshot) — **fixed**
++ added `css.test.ts` (var-superset + no-drift guard). Resolved: HIGH PermissionRow color-only state
+(→ visible text), MED dot 3:1 ring + FOUC pre-paint script + generated-CSS verification, LOW disabled
+legibility / `readStored` / `rem` sizes. Re-screenshotted: buttons now genuinely filled both themes.
+
 **Invariants:** none touched (pure UI); truthfulness — status pills reflect real engine state.
 
 ---

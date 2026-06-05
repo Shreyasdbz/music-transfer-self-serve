@@ -1379,8 +1379,19 @@ A2 multi-user-ready seam, A3 session cookie) gate the build.
   screenshotted light + dark — type scale, Card/buttons/pills/rows/dropdown/collapsible all correct;
   tier-2 inverts cleanly in dark. **a11y checked live**: `aria-expanded`/`aria-pressed`/`aria-label`/
   `role=img` wired, native keyboard-reachable controls, focus-visible ring, reduced-motion rule.
+- **Validation**: 5-persona adversarial workflow + synthesis (`wf_cfb7f849-d54`). It caught a **BLOCKER
+  my screenshot missed**: `kebab()` used `/[A-Z0-9]+/`, which grouped the digit with the next capital
+  (`btn1Bg` → `--color-btn-1bg`) so all 8 button CSS vars were disjoint from what `components.css`
+  consumes — the Button system rendered **unstyled** (transparent), which superficially *looked* like a
+  button. **Fixed** (`/[A-Z]+/`), regenerated `tokens.css`, and added `css.test.ts` (no-drift + every
+  `--color-*` referenced by components is defined — the guard that was missing). Also fixed: HIGH —
+  PermissionRow conveyed state by color alone → added visible "Connected/Not connected/Error" text
+  (1.4.1); MED — `on` dot only 2.2:1 vs white → added a `text-muted` ring (1.4.11); MED — FOUC on first
+  paint → inline pre-paint theme script in `index.html`; LOW — disabled tier-2 legibility, `readStored`
+  try/catch, type sizes → `rem` (respects OS font-size). Re-screenshotted: buttons now genuinely filled
+  (tier-2 black in light, inverts white in dark).
 - **Result**: **AC met.** Components render from tokens only (no ad-hoc hex); light/dark/auto switch +
   persist; WCAG AA verified (light+dark); keyboard nav + focus-visible + ARIA + reduced-motion. New
   deps: `@fontsource-variable/inter`, `@fontsource-variable/jetbrains-mono` (web). `build:all` +
-  `tsc` clean, **417 PASS / 0 FAIL** (386 server + 31 contrast). **Next**: Phase V5 — Solid UI (the
+  `tsc` clean, **420 PASS / 0 FAIL** (386 server + 34 token tests). **Next**: Phase V5 — Solid UI (the
   seven home sections wired to the API).

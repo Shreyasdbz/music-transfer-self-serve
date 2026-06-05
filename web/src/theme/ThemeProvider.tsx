@@ -17,8 +17,12 @@ const Ctx = createContext<ThemeCtx>();
 const STORAGE_KEY = "mtss-theme";
 
 function readStored(): ThemePref {
-  const v = typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
-  return v === "light" || v === "dark" || v === "auto" ? v : "auto";
+  try {
+    const v = localStorage.getItem(STORAGE_KEY);
+    return v === "light" || v === "dark" || v === "auto" ? v : "auto";
+  } catch {
+    return "auto"; // locked-down WebView / disabled storage
+  }
 }
 
 export function ThemeProvider(props: { children: JSX.Element }): JSX.Element {

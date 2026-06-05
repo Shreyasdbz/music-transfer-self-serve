@@ -49,9 +49,18 @@ export function StatusPill(props: {
 }
 
 // ── Status dot (connection indicator) ─────────────────────────────────
-export function StatusDot(props: { state: "on" | "off" | "error"; label: string }): JSX.Element {
-  return <span class="status-dot" data-state={props.state} role="img" aria-label={props.label} />;
+// `decorative` drops the ARIA role/label — use it when a visible text label
+// already conveys the state (so SR users don't hear it twice).
+export function StatusDot(props: { state: "on" | "off" | "error"; label?: string; decorative?: boolean }): JSX.Element {
+  if (props.decorative) return <span class="status-dot" data-state={props.state} aria-hidden="true" />;
+  return <span class="status-dot" data-state={props.state} role="img" aria-label={props.label ?? props.state} />;
 }
+
+const STATE_TEXT: Record<"on" | "off" | "error", string> = {
+  on: "Connected",
+  off: "Not connected",
+  error: "Error",
+};
 
 // ── App / provider icon (brand color is data, not a theme token) ──────
 export function AppIcon(props: { color: string; label: string; children?: JSX.Element }): JSX.Element {
@@ -74,7 +83,11 @@ export function PermissionRow(props: {
     <div class="row">
       {props.icon}
       <span class="row-label t-note">{props.label}</span>
-      <StatusDot state={props.state} label={`${props.label}: ${props.state === "on" ? "connected" : props.state}`} />
+      {/* State shown by BOTH a visible word and color (not color alone — 1.4.1). */}
+      <span class="row-state">
+        <StatusDot state={props.state} decorative />
+        <span class="row-state-text t-subtle">{STATE_TEXT[props.state]}</span>
+      </span>
       <Button size="sm" onClick={() => props.onCheck?.()}>
         {props.checkLabel ?? "Check"}
       </Button>

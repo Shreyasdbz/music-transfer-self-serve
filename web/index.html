@@ -5,6 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="data:," />
     <title>Music Transfer — Self Serve</title>
+    <!-- Apply the persisted theme BEFORE first paint to avoid a flash of the
+         wrong theme (ThemeProvider then takes over). "auto" leaves the attribute
+         absent so the prefers-color-scheme fallback governs. Keep the key in
+         sync with ThemeProvider's STORAGE_KEY ("mtss-theme"). -->
+    <script>
+      try {
+        var p = localStorage.getItem("mtss-theme");
+        if (p === "light" || p === "dark") document.documentElement.setAttribute("data-theme", p);
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

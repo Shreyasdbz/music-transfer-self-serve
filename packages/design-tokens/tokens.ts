@@ -149,13 +149,18 @@ function colorVars(c: ColorTokens): string {
     .join("\n");
 }
 function kebab(s: string): string {
-  return s.replace(/[A-Z0-9]+/g, (m) => "-" + m.toLowerCase());
+  // Split on UPPERCASE only — NOT digits. `/[A-Z0-9]+/` groups a digit with the
+  // following capital (e.g. "btn1Bg" → "1B" → "btn-1bg"), which mis-named every
+  // button var and left the Button system unstyled. "btn1Bg" → "btn1-bg".
+  return s.replace(/[A-Z]+/g, (m) => "-" + m.toLowerCase());
 }
 function typeClasses(): string {
   return Object.entries(typography)
     .map(([name, t]) => {
       const fam = t.family === "inter" ? "var(--font-inter)" : "var(--font-mono)";
-      return `.t-${name} {\n  font-family: ${fam};\n  font-size: ${t.size}px;\n  font-weight: ${t.weight};\n  letter-spacing: ${t.tracking}em;\n  line-height: ${t.lineHeight};\n}`;
+      // rem (base 16px) so the type scale respects the user's OS/browser
+      // font-size preference (a11y), not just page zoom.
+      return `.t-${name} {\n  font-family: ${fam};\n  font-size: ${t.size / 16}rem;\n  font-weight: ${t.weight};\n  letter-spacing: ${t.tracking}em;\n  line-height: ${t.lineHeight};\n}`;
     })
     .join("\n");
 }
