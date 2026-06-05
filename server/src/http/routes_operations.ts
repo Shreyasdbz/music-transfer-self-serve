@@ -13,8 +13,16 @@ import { listLibraryPlaylists } from "../clients/apple.js";
 import { log } from "../util/log.js";
 import { startOperation, subscribeOperation } from "../operation/runner.js";
 import { getOperation, getOperationEvents, listOperations, OperationRunningConflict } from "../ledger/operationsStore.js";
+import { getProvider, hasProvider } from "../providers/registry.js";
 
 type Side = "source" | "destination";
+
+/** A provider id usable as a transfer source/destination: registered AND
+ * available (a "Coming soon" placeholder is registered but available:false).
+ * Type guard so the resolved id narrows to a defined Platform downstream. */
+function transferable(id: Platform | undefined): id is Platform {
+  return !!id && hasProvider(id) && getProvider(id).available !== false;
+}
 
 interface TargetInput {
   kind?: "playlist" | "liked" | "favorites";
@@ -170,8 +178,11 @@ export function registerOperationsRoutes(app: Hono): void {
     }
 
     const { source, destination } = body;
-    if (source !== "spotify" && source !== "apple") return err(c, 400, "invalid_source");
-    if (destination !== "spotify" && destination !== "apple") return err(c, 400, "invalid_destination");
+    // Registry-driven: accept any registered, AVAILABLE provider (a not-yet-
+    // functional placeholder like the YouTube "Coming soon" provider has
+    // available:false and is rejected here, so it can never be a transfer end).
+    if (!transferable(source)) return err(c, 400, "invalid_source");
+    if (!transferable(destination)) return err(c, 400, "invalid_destination");
     if (source === destination) return err(c, 400, "source_equals_destination");
 
     const srcRes = await resolveTarget(source, "source", body.sourceTarget);

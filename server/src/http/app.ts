@@ -87,6 +87,8 @@ export function buildApp(csrfToken: string): Hono {
         likedKind: p.capabilities.likedKind,
         supportsIsrc: p.capabilities.supportsIsrc,
         likedReadable: p.capabilities.likedReadable,
+        // Providers that omit `available` are available; only a placeholder
+        // (e.g. the YouTube "Coming soon" stub) sets it false.
         available: p.available ?? true,
       })),
     }),

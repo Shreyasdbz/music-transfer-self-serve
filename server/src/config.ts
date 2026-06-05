@@ -2,7 +2,7 @@
 // Failing config returns a tagged error rather than throwing — `src/server.ts`
 // formats it into an actionable startup message; `doctor`'s `env` check reads
 // the same predicate.
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync, chmodSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { config as loadDotenv } from "dotenv";
@@ -11,6 +11,9 @@ loadDotenv();
 
 const ROOT = resolve(import.meta.dirname, "..");
 export const DATA_DIR = resolve(ROOT, "data");
+/** The local dotenv file (loaded above). May not exist (Docker injects env via
+ * `env_file`/`environment` instead) — handled gracefully by `ensureEnvPerms`. */
+export const ENV_PATH = resolve(ROOT, ".env");
 export const SECRETS_DIR = resolve(ROOT, "secrets");
 // The built Vite+Solid client (../web/dist relative to server/). In dev the
 // client is served by Vite (which proxies /api + /auth here); in prod Hono
@@ -68,13 +71,27 @@ export const SESSION_SECRET = process.env["SESSION_SECRET"]?.trim() || randomByt
  * (blueprint §4 + Phase 2 AC #2). */
 export const SPOTIFY_REDIRECT_URI_EXPECTED = `${PUBLIC_ORIGIN}/auth/spotify/callback`;
 
-export interface AppConfig {
-  readonly spotifyClientId: string;
-  readonly spotifyRedirectUri: string;
-  readonly appleTeamId: string;
-  readonly appleKeyId: string;
-  readonly applePrivateKeyPath: string;
-  readonly appleMusicKitAppName: string;
+/** Tighten `.env` to `0600` if it exists and is group/world-readable (it holds
+ * SPOTIFY_CLIENT_ID, SESSION_SECRET, etc.). Mirrors the `.p8` hardening. Returns
+ * a status so the caller can log without `config` importing the logger:
+ *   "absent"    — no local .env (Docker injects env another way) → no-op
+ *   "ok"        — already not group/world-accessible
+ *   "tightened" — was loose, chmod 0600 succeeded
+ *   "insecure"  — was loose and chmod failed (e.g. read-only mount) */
+export function ensureEnvPerms(): "absent" | "ok" | "tightened" | "insecure" {
+  let mode: number;
+  try {
+    mode = statSync(ENV_PATH).mode;
+  } catch {
+    return "absent";
+  }
+  if ((mode & 0o077) === 0) return "ok";
+  try {
+    chmodSync(ENV_PATH, 0o600);
+    return "tightened";
+  } catch {
+    return "insecure";
+  }
 }
 
 export interface EnvCheckResult {
@@ -117,11 +134,10 @@ export function checkEnv(): EnvCheckResult {
   };
 }
 
-// (The unified `loadConfig()` was removed — every call site now uses the
-// platform-scoped `loadSpotifyConfig()` or `loadAppleConfig()` below, so a
-// missing Apple key never blocks a Spotify-only code path and vice versa.
-// `AppConfig` is retained as a re-export shape for anything that wants the
-// full union; today no code references it.)
+// (The unified `loadConfig()` / `AppConfig` shape was removed — every call site
+// now uses the platform-scoped `loadSpotifyConfig()` or `loadAppleConfig()`
+// below, so a missing Apple key never blocks a Spotify-only code path and vice
+// versa.)
 
 export interface SpotifyConfig {
   readonly spotifyClientId: string;

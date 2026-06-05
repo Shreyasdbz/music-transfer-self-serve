@@ -9,6 +9,7 @@ import type { Server } from "node:http";
 import { HTTP_HOST, HTTP_ORIGIN, HTTP_PORT } from "../config.js";
 import { log } from "../util/log.js";
 import { buildApp } from "./app.js";
+import { registerBuiltInProviders } from "../providers/index.js";
 
 export interface ServerHandle {
   readonly server: Server;
@@ -17,6 +18,10 @@ export interface ServerHandle {
 }
 
 export function startHttpServer(): Promise<ServerHandle> {
+  // Ensure the provider registry is populated — /api/providers, the operations
+  // route, and the runner all resolve providers from it. Idempotent (guarded),
+  // so it's safe even though main() also calls it.
+  registerBuiltInProviders();
   const csrfToken = randomBytes(32).toString("base64url");
   const app = buildApp(csrfToken);
 

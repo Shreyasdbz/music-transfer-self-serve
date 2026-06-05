@@ -17,13 +17,20 @@ import {
   type CatalogEvent,
 } from "../catalog/catalog.js";
 import { getCatalog, lastFetchedAt } from "../ledger/catalogStore.js";
+import { listProviders } from "../providers/registry.js";
 import { log } from "../util/log.js";
 
 export function registerCatalogRoutes(app: Hono): void {
   app.get("/api/catalog", (c) =>
     c.json({
       rows: getCatalog(),
-      last_fetched: { spotify: lastFetchedAt("spotify"), apple: lastFetchedAt("apple") },
+      // Registry-driven: one entry per available provider (a "Coming soon"
+      // placeholder has no catalog), so a new provider appears with no edit.
+      last_fetched: Object.fromEntries(
+        listProviders()
+          .filter((p) => p.available !== false)
+          .map((p) => [p.id, lastFetchedAt(p.id)]),
+      ),
       refreshing: isCatalogRefreshRunning(),
     }),
   );

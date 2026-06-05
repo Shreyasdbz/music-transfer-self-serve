@@ -31,6 +31,10 @@ export interface OperationDeps {
     playlistId: string | undefined,
     destIds: string[],
   ): Promise<void>;
+  /** The destination's per-request write batch size (= the runner's chunk size).
+   * Registry-driven from the provider's capabilities, kept on the deps seam so
+   * the runner never reaches the registry directly. */
+  writeBatchSize(destination: Platform, target: ResolvedTarget): number;
 }
 
 // ── Real implementations (registry-backed) ───────────────────────────────
@@ -64,6 +68,15 @@ async function writeTracks(
   return getProvider(destination).writeTracks(OWNER, target, playlistId, destIds);
 }
 
+/** Chunk size = the destination provider's per-request batch cap. These
+ * capability fields are defined from the same client batch constants, so this
+ * is byte-identical to the prior hardcoded Spotify/Apple chunk logic. */
+function writeBatchSize(destination: Platform, target: ResolvedTarget): number {
+  const caps = getProvider(destination).capabilities;
+  const toSavedSet = target.kind === "liked" || target.kind === "favorites";
+  return toSavedSet ? caps.writeBatchLike : caps.writeBatchAdd;
+}
+
 const REAL_DEPS: OperationDeps = {
   readSource,
   readDestination,
@@ -71,6 +84,7 @@ const REAL_DEPS: OperationDeps = {
   match,
   deleteCache,
   writeTracks,
+  writeBatchSize,
 };
 
 let deps: OperationDeps = REAL_DEPS;

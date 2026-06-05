@@ -162,6 +162,23 @@ try {
   const opsBody = (await (await fetch(`${B}/api/operations`)).json()) as Record<string, unknown>;
   assert(Array.isArray(opsBody["operations"]), "shape: /api/operations {operations:[...]}");
 
+  const provBody = (await (await fetch(`${B}/api/providers`)).json()) as { providers?: unknown };
+  const provList = provBody.providers as Array<Record<string, unknown>> | undefined;
+  assert(Array.isArray(provList) && provList.length >= 2, `shape: /api/providers is an array (got ${provList?.length})`);
+  assert(
+    !!provList &&
+      provList.every(
+        (p) =>
+          typeof p["id"] === "string" &&
+          typeof p["displayName"] === "string" &&
+          "likedKind" in p &&
+          typeof p["supportsIsrc"] === "boolean" &&
+          typeof p["likedReadable"] === "boolean" &&
+          typeof p["available"] === "boolean",
+      ),
+    "shape: each provider has {id, displayName, likedKind, supportsIsrc, likedReadable, available}",
+  );
+
   // ── bodyLimit → 413 on an oversized POST ─────────────────────────────────
   const big = "x".repeat((1 << 20) + 1024); // > 1 MiB
   const tooBig = await fetch(`${B}/api/operations`, {

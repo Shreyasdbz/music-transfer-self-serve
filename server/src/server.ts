@@ -4,6 +4,7 @@
 // `route()` helper in `http/server.ts`.
 
 import { closeLedger, openLedger } from "./ledger/db.js";
+import { ensureEnvPerms, ENV_PATH } from "./config.js";
 import { startHttpServer } from "./http/server.js";
 import { registerBuiltInProviders } from "./providers/index.js";
 import { installAuthFailureSink } from "./preflight/gate.js";
@@ -12,6 +13,11 @@ import { stopNonceSweeper } from "./auth/apple.js";
 import { log } from "./util/log.js";
 
 async function main(): Promise<void> {
+  // Harden local .env perms before anything else (it holds secrets).
+  const envPerms = ensureEnvPerms();
+  if (envPerms === "tightened") log.info("env.perms_tightened", { path: ENV_PATH });
+  else if (envPerms === "insecure") log.warn("env.perms_insecure", { path: ENV_PATH });
+
   openLedger();
   registerBuiltInProviders(); // register Spotify + Apple in the provider registry
   installAuthFailureSink(); // wire util/http 401/403-scope → gate auto-invalidation

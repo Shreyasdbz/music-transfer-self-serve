@@ -13,7 +13,7 @@
     "stop": "scripts/dev.sh stop",
     "status": "scripts/dev.sh status",
     "restart": "scripts/dev.sh restart",
-    "test": "tsx src/util/log.test.ts && tsx src/auth/spotify.test.ts && tsx src/auth/apple.test.ts && tsx src/http/server.test.ts && tsx src/ledger/db.test.ts && tsx src/ledger/tracksCache.test.ts && tsx src/match/match.test.ts && tsx src/ledger/preflightStore.test.ts && tsx src/preflight/gate.test.ts && tsx src/preflight/runner.test.ts && tsx src/ledger/catalogStore.test.ts && tsx src/http/routes_operations.test.ts && tsx src/operation/runner.test.ts && tsx src/clients/apple.test.ts && tsx src/providers/registry.test.ts && tsx src/providers/providers.test.ts && tsx src/providers/youtube/provider.test.ts && tsx src/operation/deps.test.ts && tsx src/http/session.test.ts",
+    "test": "tsx src/util/log.test.ts && tsx src/auth/spotify.test.ts && tsx src/auth/apple.test.ts && tsx src/http/server.test.ts && tsx src/ledger/db.test.ts && tsx src/ledger/tracksCache.test.ts && tsx src/match/match.test.ts && tsx src/ledger/preflightStore.test.ts && tsx src/preflight/gate.test.ts && tsx src/preflight/runner.test.ts && tsx src/ledger/catalogStore.test.ts && tsx src/http/routes_operations.test.ts && tsx src/operation/runner.test.ts && tsx src/clients/apple.test.ts && tsx src/providers/registry.test.ts && tsx src/providers/providers.test.ts && tsx src/providers/youtube/provider.test.ts && tsx src/providers/builtin.test.ts && tsx src/operation/deps.test.ts && tsx src/http/session.test.ts && tsx src/http/session_gate.test.ts && tsx src/config.test.ts",
     "test:log": "tsx src/util/log.test.ts",
     "test:spotify": "tsx src/auth/spotify.test.ts",
     "test:apple": "tsx src/auth/apple.test.ts",

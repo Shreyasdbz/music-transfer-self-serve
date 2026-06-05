@@ -7,9 +7,15 @@ import { closeLedger, openLedger } from "../ledger/db.js";
 import { getOperation, getOperationEvents, OperationRunningConflict } from "../ledger/operationsStore.js";
 import { __setOperationDeps, __resetOperationDeps, type DestTrack } from "./deps.js";
 import { startOperation } from "./runner.js";
+import { registerBuiltInProviders } from "../providers/index.js";
 import type { CanonicalTrack } from "../match/identity.js";
 import type { MatchResult } from "../match/matcher.js";
 import type { OperationSpec } from "./types.js";
+
+// The fake deps override read/match/write, but the (non-overridden) real
+// `writeBatchSize` reads the destination provider's static capabilities, so the
+// registry must be populated. Capabilities are static data → still ZERO network.
+registerBuiltInProviders();
 
 const SNAP = LEDGER_PATH + ".op-test-snap";
 const _had = existsSync(LEDGER_PATH);

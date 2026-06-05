@@ -9,6 +9,7 @@ import { LEDGER_PATH } from "../config.js";
 import { closeLedger, openLedger } from "../ledger/db.js";
 import { getPreflightRun } from "../ledger/preflightStore.js";
 import { runPreflight } from "./runner.js";
+import { CHECKS } from "./checks.js";
 
 const SNAP = LEDGER_PATH + ".runner-test-snap";
 const _had = existsSync(LEDGER_PATH);
@@ -40,7 +41,7 @@ process.env = saved; // restore env
 
 const run = getPreflightRun(handle.id);
 assert(run !== undefined, "runner: run row persisted");
-assert(run?.checks.length === 10, `runner: all 10 checks recorded (got ${run?.checks.length})`);
+assert(run?.checks.length === CHECKS.length, `runner: all ${CHECKS.length} checks recorded (got ${run?.checks.length})`);
 
 const byName = new Map(run!.checks.map((c) => [c.name, c]));
 assert(byName.get("env")?.status === "fail", `runner: env failed (got ${byName.get("env")?.status})`);

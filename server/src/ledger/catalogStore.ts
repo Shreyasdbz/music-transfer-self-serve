@@ -8,7 +8,10 @@
 
 import { openLedger } from "./db.js";
 
-export type Platform = "spotify" | "apple";
+/** A provider id (registry-driven). Was the closed `"spotify" | "apple"` union;
+ * widened to a provider id so catalog code loops over the registry instead of
+ * branching on a fixed platform set (matches `operation/types.ts`). */
+export type Platform = string;
 export type CatalogKind = "playlist" | "liked" | "favorites";
 
 export const LIKED_SENTINEL = "__liked__";

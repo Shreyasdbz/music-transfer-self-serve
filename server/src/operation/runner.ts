@@ -9,8 +9,6 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { HttpError } from "../util/http.js";
 import { log, redact } from "../util/log.js";
-import { SPOTIFY_ADD_BATCH, SPOTIFY_SAVE_BATCH } from "../clients/spotify.js";
-import { APPLE_ADD_BATCH } from "../clients/apple.js";
 import { identityKey, type CanonicalTrack } from "../match/identity.js";
 import {
   finishOperation,
@@ -194,17 +192,6 @@ function computeStatus(s: OperationSummary): OperationStatus {
 
 type Emit = (type: OperationEventType, payload: Record<string, unknown>) => void;
 
-/** The write batch size for a destination — must equal the per-HTTP-request
- * size the client uses, because that request is the atomic unit. Chunking at
- * this size in the runner means a chunk failure only re-touches the tracks in
- * THAT chunk (each chunk = one request = all-or-nothing), so the per-track
- * fallback can never re-add an already-committed chunk → no duplicates from a
- * partial-batch failure. */
-function writeChunkSize(spec: OperationSpec): number {
-  if (spec.destination === "spotify") return spec.destinationTarget.kind === "liked" ? SPOTIFY_SAVE_BATCH : SPOTIFY_ADD_BATCH;
-  return APPLE_ADD_BATCH;
-}
-
 async function applyWrites(
   spec: OperationSpec,
   destPlaylistId: string | undefined,
@@ -215,7 +202,7 @@ async function applyWrites(
   writtenDestIds: Set<string>,
 ): Promise<void> {
   if (staged.length === 0) return;
-  const chunkSize = writeChunkSize(spec);
+  const chunkSize = deps.writeBatchSize(spec.destination, spec.destinationTarget);
   // Sequential chunks (Apple append-only requires no concurrent adds, §6.1).
   for (let i = 0; i < staged.length; i += chunkSize) {
     const chunk = staged.slice(i, i + chunkSize);
