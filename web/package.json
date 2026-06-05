@@ -1,0 +1,22 @@
+{
+  "name": "@mtss/web",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Vite + Solid client for music-transfer-self-serve (design-system-driven UI; built in phases V4–V5)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mtss/design-tokens": "*",
+    "solid-js": "^1.8.17"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "vite": "^5.4.0",
+    "vite-plugin-solid": "^2.10.2"
+  }
+}

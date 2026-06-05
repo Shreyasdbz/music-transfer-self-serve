@@ -1,49 +1,32 @@
 {
   "name": "music-transfer-self-serve",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Self-hosted local web tool for one-time additive transfers between Spotify and Apple Music",
+  "description": "Self-hosted web tool for one-time additive transfers between Spotify, Apple Music, and YouTube Music",
   "license": "MIT",
   "author": "Shreyas (@shreyasdbz)",
   "type": "module",
   "engines": {
     "node": ">=20"
   },
+  "workspaces": [
+    "server",
+    "web",
+    "packages/*"
+  ],
   "scripts": {
-    "build": "tsc --noEmit",
-    "start": "tsx src/server.ts",
-    "stop": "scripts/dev.sh stop",
-    "status": "scripts/dev.sh status",
-    "restart": "scripts/dev.sh restart",
-    "test": "tsx src/util/log.test.ts && tsx src/auth/spotify.test.ts && tsx src/auth/apple.test.ts && tsx src/http/server.test.ts && tsx src/ledger/db.test.ts && tsx src/ledger/tracksCache.test.ts && tsx src/match/match.test.ts && tsx src/ledger/preflightStore.test.ts && tsx src/preflight/gate.test.ts && tsx src/preflight/runner.test.ts && tsx src/ledger/catalogStore.test.ts && tsx src/http/routes_operations.test.ts && tsx src/operation/runner.test.ts && tsx src/clients/apple.test.ts",
-    "test:log": "tsx src/util/log.test.ts",
-    "test:spotify": "tsx src/auth/spotify.test.ts",
-    "test:apple": "tsx src/auth/apple.test.ts",
-    "test:http": "tsx src/http/server.test.ts",
-    "test:ledger": "tsx src/ledger/db.test.ts",
-    "test:trackscache": "tsx src/ledger/tracksCache.test.ts",
-    "test:match": "tsx src/match/match.test.ts",
-    "test:preflight": "tsx src/ledger/preflightStore.test.ts && tsx src/preflight/gate.test.ts && tsx src/preflight/runner.test.ts",
-    "test:catalog": "tsx src/ledger/catalogStore.test.ts",
-    "doctor": "tsx src/cli.ts doctor",
-    "lint": "eslint .",
+    "build": "npm run build --workspace @mtss/server",
+    "build:web": "npm run build --workspace @mtss/web",
+    "build:all": "npm run build --workspaces --if-present",
+    "start": "npm run start --workspace @mtss/server",
+    "doctor": "npm run doctor --workspace @mtss/server",
+    "test": "npm test --workspace @mtss/server",
+    "dev:web": "npm run dev --workspace @mtss/web",
+    "lint": "npm run lint --workspace @mtss/server",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/jsonwebtoken": "^9.0.6",
-    "@types/node": "^20.12.7",
-    "@typescript-eslint/eslint-plugin": "^7.7.0",
-    "@typescript-eslint/parser": "^7.7.0",
-    "eslint": "^8.57.0",
-    "prettier": "^3.2.5",
-    "tsx": "^4.7.2",
-    "typescript": "^5.4.5"
-  },
-  "dependencies": {
-    "better-sqlite3": "^11.0.0",
-    "dotenv": "^16.4.5",
-    "jsonwebtoken": "^9.0.2"
+    "prettier": "^3.2.5"
   }
 }

@@ -1,0 +1,10 @@
+/* Design tokens as CSS custom properties — emitted from the Figma palette in
+ * phase V4 (`:root` = light, `[data-theme="dark"]` = derived dark; theme
+ * switching is light/dark/auto). Skeleton for now. */
+:root {
+  /* color, type, space, radius, shadow tokens land in V4 */
+}
+
+[data-theme="dark"] {
+  /* derived dark palette lands in V4 */
+}

@@ -1213,3 +1213,41 @@ summary shown), which is how the error body was captured.
   destination ⇒ all matched tracks added). No deps.
 - **Next**: re-run the same Spotify → Apple transfer — destination-read now returns [] and the
   308 matched tracks should write. Then the Apple → Spotify direction for the §14 DoD.
+
+---
+
+## v2 — multi-phase upgrade (YouTube + framework migration + UI overhaul)
+
+Plan and validated findings live in `todo.md` (see its §0 validation summary). Long-lived
+integration branch `v2-integration`; each phase is a branch `v2/<phase>` merged when its AC
+passes and the engine suite stays green. Three human-directed §15 amendments (A1 network-deploy,
+A2 multi-user-ready seam, A3 session cookie) gate the build.
+
+### 2026-06-05 — Phase V0: scaffold + amendments (branch `v2/scaffold-amendments`)
+
+- **Start**: stand up the npm-workspace layout (`server/`, `web/`, `packages/*`), move the proven
+  engine under `server/` without touching its logic, scaffold the Vite+Solid client and the
+  design-tokens package, and write the three blueprint §15 amendments — all while keeping the
+  engine suite green.
+- **Decisions**:
+  - Restructured to **npm workspaces** (root `package.json` is now a thin manager delegating to
+    `@mtss/server`, `@mtss/web`, `@mtss/design-tokens`).
+  - Moved `src/ → server/src/`, `web/ → server/web/` (old vanilla UI; kept until V5),
+    `scripts/`, `tsconfig.json`, `.eslintrc.cjs`, `.env.example` under `server/` via `git mv`
+    (history preserved; 53 renames). Gitignored runtime dirs (`data/`, `secrets/`, `.env`) moved
+    locally too so `server/` is self-contained — `config.ts`'s `ROOT = resolve(import.meta.dirname,
+    "..")` now resolves to `server/`, so `DATA_DIR`/`SECRETS_DIR`/`WEB_DIR` stay consistent with
+    **zero code change**. `dotenv` reads `server/.env` (npm runs workspace scripts with cwd=server).
+  - **New dev deps** (justified, in `@mtss/web`): `vite`, `vite-plugin-solid` (the chosen build
+    tool/plugin); `solid-js` (chosen client runtime); `typescript` (web tsconfig). `@mtss/design-tokens`
+    has no deps yet (skeleton). No new server runtime deps (Hono lands in V3). Root keeps `prettier`.
+  - Scoped the server `format` script to `src/**` (no per-workspace `.prettierignore` needed);
+    glob-ified root `.prettierignore`; moved `.eslintrc.cjs` into `server/` so its
+    `project: "./tsconfig.json"` resolves.
+  - Wrote §15 amendments **A1/A2/A3** (human-directed; network-deploy, multi-user seam, session
+    cookie). Core invariants preserved (secrets/privacy strengthened with HTTPS + secretless cookie).
+- **Result**: **AC met.** `npm run build` (server `tsc --noEmit`) clean; **296 PASS / 0 FAIL**
+  engine suite green after the move; `npm run build:web` (`vite build`) emits a `web/dist` shell;
+  blueprint §15 carries A1–A3. `.gitignore` already covers `dist/`/`node_modules/`/`data/`/`secrets/`
+  at any depth. **Next**: Phase V1 — the `MusicProvider` abstraction + registry (collapse the ~30
+  two-platform branches; keep `runner.ts` untouched).

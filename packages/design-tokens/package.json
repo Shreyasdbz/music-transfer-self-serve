@@ -1,0 +1,12 @@
+{
+  "name": "@mtss/design-tokens",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Design tokens (Figma → light + derived dark) — single source of truth for the UI. Populated in phase V4.",
+  "main": "tokens.ts",
+  "exports": {
+    ".": "./tokens.ts",
+    "./tokens.css": "./tokens.css"
+  }
+}
