@@ -1251,3 +1251,39 @@ A2 multi-user-ready seam, A3 session cookie) gate the build.
   blueprint §15 carries A1–A3. `.gitignore` already covers `dist/`/`node_modules/`/`data/`/`secrets/`
   at any depth. **Next**: Phase V1 — the `MusicProvider` abstraction + registry (collapse the ~30
   two-platform branches; keep `runner.ts` untouched).
+
+### 2026-06-05 — Phase V1: provider abstraction (branch `v2/provider-abstraction`)
+
+- **Start**: collapse the ~30 hardcoded `"spotify"|"apple"` branch points onto a `MusicProvider`
+  interface + registry so YouTube (V7) is drop-in, keeping the proven engine behavior-identical.
+- **Decisions**:
+  - `providers/{types,registry,index}` + `spotify`/`apple` providers wrap the existing clients and
+    own their ⇆canonical adapters + quirks (Apple favorites→empty-D, library-vs-catalog write id,
+    append-only). Capabilities encode behavior (`supportsIsrc`, `likedReadable`,
+    `supportsLikedRemoval: false`, batch caps, `searchLimit`) so the engine stops branching on
+    platform strings.
+  - Matcher collapsed: `matchSpotifyToApple`/`matchAppleToSpotify` → one
+    `matchToDestination(source, destProvider)`; Tier-1 gated on `supportsIsrc`; cache provider-keyed
+    onto the v1 `spotify_id`/`apple_catalog_id` columns (the generalized `track_provider_ids` table
+    is V2). `deps.ts` → thin `getProvider()` lookups; `match()` gained an explicit `destination` arg
+    ("opposite platform" can't be inferred with >2 providers). The only `runner.ts` change is the
+    two `deps.match(…, spec.destination)` call sites — old 2-param fakes ignore the extra arg, so
+    `runner.test.ts` is literally untouched. `Platform`/`CanonicalTrack.source` widened to a
+    `ProviderId` (string).
+  - **Deferred (logged in todo.md V1)**: batch-size-from-capabilities → V7 (writeChunkSize is
+    byte-identical to v1, so deferring preserves parity); `catalogStore`/`catalog`/route `Platform`
+    rename → their phases (widening is non-breaking). No new deps.
+- **Validation**: ran a 5-persona adversarial workflow + synthesis (`wf_0aa37892-805`). Verdict:
+  behavior-preserving for the live Spotify↔Apple flows, all invariants intact (additive-only;
+  `supportsLikedRemoval` literal `false`; no remove/unfavorite/reorder path), **safe to merge**.
+  6 findings, all **low**: writeChunkSize hardcode (deferred, parity-identical); columnIdFor
+  same-provider ambiguity + removed source guard (both unreachable in v1 — fixed with a defensive
+  `same_provider_match` guard in `matchToDestination`); and three test-coverage gaps on the new
+  seams. **Resolved the gaps**: added `operation/deps.test.ts` (locks the registry routing — proves
+  `match()` searches the DEST provider, not the source), `providers/providers.test.ts` (provider
+  dispatch, additive-safety guards, capability invariants, `appleLibraryToCanonical`), and
+  `providers/registry.test.ts`.
+- **Result**: **AC met.** `tsc --noEmit` clean; eslint clean; **341 PASS / 0 FAIL** (was 296;
+  +45 from the new provider/deps/registry tests and the migrated matcher tests). No spec move → no
+  §15 row. **Next**: Phase V2 — ledger forward-migration (`users`, `track_provider_ids` + backfill,
+  `user_id` columns), which also generalizes the matcher cache off the v1 per-platform columns.

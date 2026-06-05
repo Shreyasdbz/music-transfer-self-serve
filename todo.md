@@ -223,23 +223,36 @@ build` produces a shell; blueprint §15 contains A1–A3.
       `MusicProvider` (operation+match surface; auth/catalog/preflight slices added in later phases).
 - [x] `providers/registry.ts` — `registerProvider/getProvider/hasProvider/listProviders`
       (+ `__clearRegistry` test hook); tested in `providers/registry.test.ts` (11 asserts).
-- [ ] `providers/spotify/provider.ts` + `providers/apple/provider.ts` — wrap existing
-      `clients/*` + `auth/*`; move the `toCanonical` adapters in here (return `CanonicalTrack[]`).
-- [ ] `match/identity.ts` — `CanonicalTrack.source: ProviderId` (was union).
-- [ ] `match/matcher.ts` — collapse `matchSpotifyToApple`/`matchAppleToSpotify` (+ per-direction
-      converters + `source.source === "spotify"` cache branch) into one
-      `matchToDestination(source, destProvider, { useCache })`. Tier-1 gated on
-      `destProvider.capabilities.supportsIsrc`.
-- [ ] `operation/deps.ts` — rewrite all 5 if/else trees onto `getProvider(...)`. **Keep
-      `OperationDeps` shape identical** so `runner.ts` is untouched.
-- [ ] `operation/runner.ts:~204` — batch size from `getProvider(dest).capabilities.writeBatch*`
-      (the only runner edit; keep the rest byte-stable).
-- [ ] `operation/types.ts`, `ledger/catalogStore.ts` — `Platform` → `ProviderId`.
-- [ ] Register both providers at startup.
+- [x] `providers/spotify/provider.ts` + `providers/apple/provider.ts` — wrap existing
+      `clients/*`; `toCanonical` adapters moved in (return `CanonicalTrack[]`); own their quirks.
+- [x] `match/identity.ts` — `CanonicalTrack.source` widened to `string` (ProviderId; avoids an
+      import cycle).
+- [x] `match/matcher.ts` — collapsed into `matchToDestination(source, destProvider, { useCache })`;
+      Tier-1 gated on `supportsIsrc`; cache provider-keyed (v1 columns); + same-provider guard.
+- [x] `operation/deps.ts` — rewritten onto `getProvider(...)`; `match()` gained a `destination` arg
+      (can't infer "opposite platform" with >2 providers); `OperationDeps` otherwise stable.
+- [x] `operation/runner.ts` — only the two `deps.match(…, spec.destination)` call sites changed
+      (fakes ignore the extra arg → `runner.test.ts` literally untouched). **Batch-size-from-
+      capabilities deferred to V7** (validation finding #1: writeChunkSize is byte-identical to v1,
+      so deferring keeps parity; YouTube's `writeBatchAdd:1` will force it).
+- [x] `operation/types.ts` — `Platform` widened to `string`. **`ledger/catalogStore.ts` /
+      `catalog.ts` / routes `Platform` rename deferred** to the catalog/route phases (widening is
+      non-breaking; not needed for the operation/match AC).
+- [x] Register both providers at startup (`providers/index.ts` → `server.ts`).
+- [x] **Tests added in validation:** `providers/registry.test.ts`, `operation/deps.test.ts`
+      (registry-routing seam), `providers/providers.test.ts` (provider dispatch + capability
+      invariants + `appleLibraryToCanonical`). Migrated `match/match.test.ts` to fake providers.
 
-**AC:** Spotify→Apple ISRC explicit-master match resolves via `matchToDestination`; Apple→Spotify
-works through the *same* function; **`runner.ts` + `runner.test.ts` untouched and green**; a test-only
-`fake` provider with `supportsIsrc:false` exercises Tier-2-only with **no engine edits**.
+**AC:** ✅ Spotify→Apple ISRC match via `matchToDestination`; Apple→Spotify via the *same* function;
+`runner.ts`/`runner.test.ts` untouched & green; a `supportsIsrc:false` fake provider exercises
+Tier-2-only with no engine edits. **tsc clean · 341 PASS / 0 FAIL · eslint clean.**
+
+**Validation:** multi-persona workflow (`wf_0aa37892-805`, 5 personas + synthesis) → verdict
+behavior-preserving + invariants intact, safe to merge. 6 findings, all low: #1 writeChunkSize
+(deferred to V7), #2/#6 columnIdFor same-provider ambiguity + removed guard (fixed: defensive
+`same_provider_match` guard in `matchToDestination`), #3 deps routing untested (fixed: `deps.test.ts`),
+#4 provider wrappers untested (fixed: `providers.test.ts`), #5 `appleLibraryToCanonical` untested
+(fixed). No spec move → no §15 row.
 
 **Invariants:** additive-only (deps/writeTracks still only add); truthfulness; auditability. No §15.
 

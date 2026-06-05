@@ -235,6 +235,15 @@ export async function matchToDestination(
   destProvider: MusicProvider,
   opts?: { useCache?: boolean },
 ): Promise<MatchResult> {
+  // Defensive guard (replaces the old per-direction `source !== "spotify"`
+  // throws): a same-provider match is meaningless and would make the v1 cache
+  // column mapping (columnIdFor) ambiguous — the source branch would win and
+  // cache the source id as the destination write id. v1 routes already reject
+  // source===destination; this surfaces any future regression loudly rather
+  // than silently miscaching.
+  if (source.source === destProvider.id) {
+    throw new Error(`same_provider_match:${destProvider.id}`);
+  }
   if (opts?.useCache !== false) {
     const hit = cacheHit(source, destProvider);
     if (hit) return hit;
