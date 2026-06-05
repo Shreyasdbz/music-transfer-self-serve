@@ -120,6 +120,14 @@ multi-user support, a hosted/remote service, distribution or packaging for other
 continuous or scheduled syncing (operations are run on-demand from the UI),
 bidirectional reconciliation, removal propagation, and any account-creation or payment
 flows.
+
+> **v2 clarification (see §15 A1 + A2).** Two of these were refined (not lifted): the tool is now
+> **self-hostable on a network** by the operator (still no managed/hosted service we run), and a
+> **multi-user-_ready_ data seam** exists (every record carries a `user_id` defaulting to
+> `__owner__`). The _feature_ — signup/login/accounts — remains out of scope and unbuilt; only the
+> backward-compatible seam was added so a future multi-user build needs no destructive migration.
+> A **YouTube Music placeholder** is shown in the UI as "Coming soon" but is non-functional and
+> excluded from transfers — a future iteration, not current scope.
 The original bidirectional-sync-with-baseline design is deliberately deferred — see
 Amendment log §15 (2026-06-03).
 If it returns, it will re-introduce the §6 capability gates and confirmation pauses.
@@ -136,23 +144,56 @@ never anything else.
 
 ## 2. Tech stack (decided — do not substitute without recording a reason in `PROGRESS.md`)
 
-| Concern             | Choice                         | Rationale                                              |
-| ------------------- | ------------------------------ | ------------------------------------------------------ |
-| Language/runtime    | TypeScript on Node.js ≥ 20     | Native `fetch`, stable, matches owner's stack          |
-| Execution           | `tsx` for dev, `tsc` for build | No bundler needed for a local CLI                      |
-| HTTP                | Built-in `fetch`               | Avoid an axios dependency; wrap it for retry/backoff   |
-| Persistence         | `better-sqlite3`               | Synchronous, fast, zero external service, single-file  |
-| JWT signing (Apple) | `jsonwebtoken`                 | ES256 developer-token signing from `.p8`               |
-| Env loading         | `dotenv`                       | Local secrets via `.env`                               |
-| Local auth server   | Node built-in `http`           | Captures OAuth redirect + Apple MUT; no Express needed |
-| Lint/format         | ESLint + Prettier              | Standard hygiene                                       |
+| Concern             | Choice                              | Rationale                                              |
+| ------------------- | ----------------------------------- | ------------------------------------------------------ |
+| Language/runtime    | TypeScript on Node.js ≥ 20          | Native `fetch`, stable, matches owner's stack          |
+| Workspaces          | npm workspaces (`server`/`web`/`packages`) | One repo, three buildable units                 |
+| Server execution    | `tsx` for run, `tsc --noEmit` for typecheck | No server bundler needed                       |
+| HTTP server         | Hono + `@hono/node-server`          | Tiny router; serves the API **and** built client on one port (v2; replaced Node built-in `http` — see §15 V3) |
+| Client              | Vite + Solid (TSX) + design tokens  | Component UI from a swappable token system, theming + a11y (v2; replaced vanilla HTML/CSS/JS — see §15 V4/V5) |
+| HTTP (outbound)     | Built-in `fetch`                    | Avoid an axios dependency; wrapped for retry/backoff   |
+| Persistence         | `better-sqlite3`                    | Synchronous, fast, zero external service, single-file  |
+| JWT signing (Apple) | `jsonwebtoken`                      | ES256 developer-token signing from `.p8`               |
+| Env loading         | `dotenv`                            | Local secrets via `.env`                               |
+| Lint/format         | ESLint + Prettier                   | Standard hygiene                                       |
 
 Keep the dependency tree minimal. Prefer the standard library.
 Every added dependency must be justified in `PROGRESS.md`.
 
+> **Note (v2).** `CLAUDE.md`'s global preferences mention Biome / pnpm / Conventional Commits; this
+> repo standardized on **npm + ESLint/Prettier** (the v1 toolchain, carried forward to avoid a
+> churny migration mid-build). Conventional Commits are followed. Reconcile by either migrating the
+> tooling or relaxing that global note — tracked as a known drift, not a defect.
+
 ---
 
-## 3. Repository layout (target)
+## 3. Repository layout
+
+> **v2 structure (authoritative).** The project is an **npm-workspaces monorepo**, not the single
+> `src/` package the original tree below described:
+>
+> ```
+> music-transfer-self-serve/
+> ├─ package.json                # workspace root: server / web / packages/*
+> ├─ blueprint.md CLAUDE.md README.md DEPLOY.md PROGRESS.md
+> ├─ Dockerfile docker-compose.yml .dockerignore   # network self-host (§15 V6)
+> ├─ assets/                     # brand icons (Spotify / Apple Music / YouTube Music)
+> ├─ server/                     # the engine + Hono HTTP surface
+> │  ├─ src/                     # everything in the v1 `src/` tree below, relocated here
+> │  │  ├─ providers/            # NEW (v2): MusicProvider abstraction + registry + per-provider modules
+> │  │  └─ http/                 # Hono app.ts + route modules + sse.ts + session.ts (replaces node:http)
+> │  ├─ .env(.example)  data/(gitignored)  secrets/(gitignored)
+> ├─ web/                        # NEW (v2): Vite + Solid client (TSX), replaces vanilla web/*
+> │  ├─ src/{App.tsx, sections/*, components/*, api/*, styles/*}
+> │  ├─ public/musickit.html     # the MUT-capture page
+> │  └─ dist/                    # Vite build output (gitignored); served by the server in prod
+> └─ packages/design-tokens/     # NEW (v2): Figma tokens → tokens.css (single source of truth)
+> ```
+>
+> The detailed module list below is the v1 layout; every `src/<module>` now lives at
+> `server/src/<module>` and is otherwise current (auth, clients, catalog, preflight, match,
+> operation, ledger, util). `http/` is now Hono (`app.ts` + `routes_*.ts` + `session.ts`) and the
+> static page is served from `web/dist`.
 
 ```
 music-transfer-self-serve/
@@ -163,7 +204,7 @@ music-transfer-self-serve/
 ├─ package.json / tsconfig.json # (tracked)
 ├─ .gitignore                   # (tracked)
 ├─ .env.example                 # template, no real values (tracked)
-├─ src/
+├─ src/                         # (v2: now server/src/)
 │  ├─ server.ts                 # entrypoint: starts the HTTP server, opens the UI
 │  ├─ cli.ts                    # minimal CLI: `doctor` only (health/diagnostics)
 │  ├─ config.ts                 # load + validate env
@@ -715,6 +756,14 @@ see Amendment log §15 (2026-06-03).
 
 ### 11.0 Local-server security model (read this before reading 11.1–11.3)
 
+> **v2 supersession (see §15 A1 + A3).** This section was written for a **loopback-only** Node
+> `http` server. In v2 the surface is **env-driven** (`BIND_HOST` defaults to `127.0.0.1`;
+> `PUBLIC_ORIGIN`/`ALLOWED_ORIGINS`/`ALLOWED_HOSTS` enable network self-hosting behind an HTTPS
+> reverse proxy) and runs on **Hono**. Every defense below still holds — the hardcoded loopback
+> `Host`/`Origin` checks became **allowlist** checks of equal-or-greater strength, and an **optional
+> signed session cookie** (`INSTANCE_ACCESS_TOKEN`) was added for network access. Default config is
+> still loopback with no login, so the original model below is exactly the zero-config behavior.
+
 The local Node HTTP server is a unique trust environment.
 It serves the UI to the user's own browser — but **any** page in any tab of that same
 browser can, in principle, issue HTTP requests to `127.0.0.1:8888`.
@@ -1099,9 +1148,14 @@ GET    /api/operations/:id/events   SSE: live events (and replay from the ledger
 ### 11.3 Minimal CLI
 
 ```
-npx tsx src/server.ts        # start the UI server (default; opens the browser)
-npx tsx src/cli.ts doctor    # runs the same 10 preflight checks as the UI button
+npm start          # start the UI + API server (v2 root script → server workspace)
+npm run doctor     # runs the same 10 preflight checks as the UI button
+npm run dev:web    # (dev) Vite client on :5173, proxying /api + /auth to the server
+npm run build:all  # (prod) design tokens + server typecheck + web → web/dist
 ```
+
+> v2: the entrypoints are `server/src/server.ts` and `server/src/cli.ts`, invoked via the root
+> workspace scripts above (the bare `npx tsx src/server.ts` form was the v1 single-package layout).
 
 The auth flows live behind the UI's auth panel — there are no separate `auth spotify` /
 `auth apple` CLI commands in v1.
@@ -1407,33 +1461,54 @@ Each phase ends with a commit (see `CLAUDE.md` git workflow) and a `PROGRESS.md`
 
 ## 14. Definition of done
 
-- All nine phases pass their acceptance criteria.
-- The UI's **Check permissions** button runs the full 10-check preflight
-  (env, Spotify ×4, Apple ×5);
-  all checks pass on a correctly configured environment;
-  the gating policy (latest pass within 24h, refresh-aware auto-invalidation) prevents
-  catalog refresh and Operations whenever it should.
-- **§11.0 security model is in place**: server binds to 127.0.0.1 only;
-  Origin/Host validation rejects cross-origin POSTs; CSRF token required and enforced
-  on every POST; OAuth state + PKCE verifier stored server-side with 10-minute TTL;
-  Apple popup uses a short-lived (≤10min) developer token bound by nonce; the 180-day
-  Apple JWT never appears in any browser-facing response.
-- The web UI can run, end-to-end, an Operation from a real Spotify playlist to a real
-  Apple Music playlist **and** the symmetric Apple → Spotify direction, verified by the
-  human.
-  At least one of those Operations uses Liked/Favorites on one side.
+> **v2 (V0–V6).** v1's nine phases shipped; v2 rebuilt the surface across phases **V0–V6** (provider
+> abstraction, ledger migration #2, Hono server, design system, Solid UI, network deploy). YouTube
+> Music is a deferred placeholder (a future iteration), not a done-criterion. The criteria below are
+> the v2 bar.
+
+**Engine + product**
+
+- All v2 phases (V0–V6) pass their acceptance criteria; the full automated suite is green
+  (server AC tests + design-token WCAG tests + web typecheck) via `npm test`.
+- The UI's permissions check runs the full 10-check preflight (env, Spotify ×4, Apple ×5); all pass
+  on a correctly configured environment; the gating policy (latest pass within 24h, refresh-aware
+  auto-invalidation) prevents catalog refresh and Operations whenever it should.
+- The web UI runs, end-to-end, an Operation from a real Spotify playlist to a real Apple Music
+  playlist **and** the symmetric Apple → Spotify direction (human-verified), at least one using
+  Liked/Favorites. _(Human-gated: requires live credentials.)_
 - Re-running the same Operation with no source changes writes nothing (idempotent).
-- Killing the server mid-Operation and restarting leaves no orphaned `status='running'`
-  rows; the prior row is `interrupted`; re-submitting the same Operation completes the
-  remaining work without duplicating already-written items.
-- `doctor` (CLI) and the UI's Permissions panel agree —
-  a `doctor` pass satisfies the UI's gate (visible to the UI within the polling cadence
-  per §11.1), and a UI pass shows up in `doctor`'s history.
-- README explains setup (incl. the four credential pause points + the preflight step),
-  how to launch the UI, and the additive-only / no-removals posture honestly.
-- A secrets audit confirms the public repo is clean:
-  no `.p8`, no `.env`, no tokens, no `data/`, no `web/` assets containing personal data,
-  no real `APPLE_TEAM_ID` / `APPLE_KEY_ID` in any tracked file.
+- Killing the server mid-Operation and restarting leaves no orphaned `status='running'` rows; the
+  prior row is `interrupted`; re-submitting completes the remaining work without duplicating.
+- `doctor` (CLI) and the UI's permissions panel agree (a pass on either satisfies the other's gate).
+
+**Security model (§11.0 + §15 A1/A3)**
+
+- Defaults to loopback (`BIND_HOST=127.0.0.1`) with no login — zero-config local behavior unchanged.
+- Network mode is env-driven: `Origin`/`Host` validated against the configured **allowlists**;
+  CSRF token required + constant-time-checked on every POST; OAuth state + PKCE verifier stored
+  server-side with 10-minute TTL; Apple popup uses a short-lived (≤10min) developer token bound by
+  nonce; the 180-day Apple JWT + `.p8` never appear in any browser-facing response.
+- The optional `INSTANCE_ACCESS_TOKEN` gate issues exactly one signed, `HttpOnly`/`Secure`/
+  `SameSite=Strict`, secretless session cookie; the gate is exercised by an automated HTTP test.
+
+**Provider abstraction**
+
+- Source/destination validation, write-batch sizing, and catalog enumeration are **registry-driven**
+  (no hardcoded `spotify`/`apple` dispatch); a non-functional placeholder (`available:false`) is
+  rejected from transfers by both the route and the UI.
+
+**Docs, deploy, secrets**
+
+- README + DEPLOY.md explain local setup (four credential pause points + preflight), network
+  self-hosting (reverse proxy/HTTPS, access token, Docker), and the additive-only posture honestly;
+  the blueprint's body sections agree with the §15 amendment log (no stale node:http / vanilla-UI /
+  loopback-only claims).
+- A secrets audit confirms the public repo is clean: no `.p8`, no `.env`, no tokens, no `data/`, no
+  `web/dist`, no personal data, no real `APPLE_TEAM_ID` / `APPLE_KEY_ID` in any tracked file.
+
+> **Human-gated remainder** (agent does not do autonomously): the ⏸E GitHub publish, the live
+> end-to-end transfer verification against real accounts, the real network deploy, and re-verifying
+> the volatile Apple/ISRC API hazards (§6) with live credentials.
 
 ---
 
@@ -1459,6 +1534,7 @@ and if they do, record that too, attributed to the human.
 | 2026-06-05 | §11.0 | **v2 amendment A3 (human-directed): one signed session cookie permitted.** §11.0's "no cookies / no session storage" relaxes to allow exactly one signed, `HttpOnly` / `Secure` / `SameSite=Strict` session cookie carrying only `{ userId }` — the access/identity seam a network-reachable instance needs. The per-server-start double-submit CSRF token is retained alongside it; no third-party cookies; the cookie holds no secret. | Loopback previously made an access seam unnecessary; a network-reachable instance requires one (v2). | Secrets/privacy **preserved** — the cookie is secretless, signed, and `SameSite=Strict`, and the CSRF defense is kept in addition. Non-destruction, truthfulness, auditability, no-scope-creep unchanged. |
 | 2026-06-05 | §9 (schema extended) | **v2 Phase V2: ledger migration #2 (forward-only) implements the A2 data seam + generalizes the match cache.** Extends §9's schema (`LATEST_SCHEMA_VERSION` 1→2): new `users` table (+ singleton `__owner__`); new `track_provider_ids((identity_key, provider_id, provider_kind) → provider_ref, FK ON DELETE CASCADE)` that replaces the per-platform `tracks.spotify_id/apple_catalog_id/apple_library_id` columns (left in place, no longer read/written), backfilled from them; `user_id TEXT NOT NULL DEFAULT '__owner__'` added to `catalog`/`operations`/`preflight_runs`. Catalog PK rebuild + per-user read scoping + the token-store reshape are DEFERRED until multi-user is activated. Also fixed a latent `schema_version` singleton-row bug (PK is `version`, so `INSERT OR REPLACE` appended a row; `setVersion` now deletes-then-inserts, `getCurrentVersion` uses `MAX`). | Generalize the cache so a 3rd provider (YouTube, V7) is drop-in, and stand up the multi-user-ready data dimension without a future destructive rewrite. | Non-destruction **preserved** — migration is CREATE/INSERT/ALTER-ADD only; NO existing row deleted/rewritten; verified zero-data-loss on a real v1 ledger (1610 tracks) by test + adversarial validation. Auditability strengthened (operations user-attributable). Secrets/privacy, truthfulness, no-scope-creep unchanged (user_id is a seam, not a shipped multi-user feature). |
 | 2026-06-05 | §11.0, §4 | **v2 Phase V6: implements A1 (env-driven network surface) + A3 (signed session cookie) + the deploy artifacts.** `config.ts` becomes env-driven (`BIND_HOST` default `127.0.0.1`, `PORT`, `PUBLIC_ORIGIN`, `ALLOWED_ORIGINS`/`ALLOWED_HOSTS` defaulting from `PUBLIC_ORIGIN`, `SPOTIFY_REDIRECT_URI_EXPECTED` derived). New `http/session.ts`: optional `INSTANCE_ACCESS_TOKEN` gate — when set, `/api/*` (except `/api/session`,`/api/health`,`/api/csrf`) requires a signed cookie `mtss_session` = `base64url({userId})` + HMAC-SHA256(`SESSION_SECRET`); `HttpOnly`/`Secure`/`SameSite=Strict`, 30-day maxAge, carries only `{userId:"__owner__"}`; token compared constant-time. New `Dockerfile` (multi-stage, serves `web/dist` + API one port), `docker-compose.yml` (loopback-published), `.dockerignore`, `DEPLOY.md` (reverse-proxy/HTTPS, Spotify 5-user dev cap + redirect-URI, Apple-MusicKit-HTTPS call-outs). Default env unchanged → loopback, no login (no regression). | Realize the A1/A3 amendments as working network-deploy support so the owner can self-host privately. | Secrets/privacy **preserved** — cookie is secretless + signed + `SameSite=Strict`; `SESSION_SECRET` defaults to a per-start random; access token compared in constant time; CSRF double-submit retained; Apple JWT/`.p8` never browser-bound. Non-destruction, truthfulness, auditability, no-scope-creep unchanged. |
+| 2026-06-05 | §2, §3, §11.0, §11.3, §14, §1 | **v2 doc-truthfulness reconciliation + audit cleanup** (agent, from a 7-persona full-v2 audit). The blueprint body still described the retired v1 system; reconciled to match the shipped code and the A1–A3 amendments: §2 stack (node:http→Hono, vanilla→Vite+Solid, npm-workspaces, + a CLAUDE.md tooling-drift note), §3 layout (added the authoritative workspace tree; annotated the v1 `src/` tree as relocated to `server/src/`), §11.0 (supersession note → env-driven/allowlist/optional session cookie), §11.3 (`npm start`/`npm run doctor`/`dev:web`/`build:all` instead of `npx tsx src/server.ts`), §14 (rewrote Definition-of-Done for V0–V6: registry-driven dispatch, allowlist security, session-gate test, human-gated remainder), §1 (multi-user/network/YouTube scope clarification). Also (code) made provider dispatch registry-driven (operations-route validation, `deps.writeBatchSize`, catalog `last_fetched`), hardened `.env` perms at startup, and added tests (session gate, env config, built-in registration). No behavior change beyond the `.env` chmod; all registry-driven paths are byte-identical for spotify/apple. | The living spec drifted from the implementation across the v2 rebuild; truthfulness requires the body to match the code, and the remaining hardcoded spotify/apple dispatch was a landmine for a 3rd provider. | Truthfulness **restored** (docs now match code). Non-destruction unchanged (additive-only; capability `supportsLikedRemoval:false` asserted at runtime in a new test). Secrets/privacy **strengthened** (.env auto-chmod 0600). Auditability + no-scope-creep unchanged. |
 
 > Keep entries terse — one line each.
 > The point is a traceable history of _why the design is what it is now_,

@@ -1470,3 +1470,39 @@ A2 multi-user-ready seam, A3 session cookie) gate the build.
   pairs pass; secrets audit clean (only the fake `.env.example` placeholder matched). Default env still
   loopback + no login. **Owner does the real deploy** (no new credential, so no pause point). **Next**:
   Phase V7 — YouTube Music provider (final).
+
+## 2026-06-05 — YouTube Music placeholder + brand icons — branch `v2/youtube-placeholder-icons`
+
+- Per owner request, YouTube Music is **deferred to a future iteration** but appears in the UI as a
+  non-functional **"Coming soon"** placeholder; the three real brand PNG icons (Spotify / Apple Music
+  / YouTube Music) from `assets/` are wired into the auth + catalog rows.
+- `providers/youtube/provider.ts`: `available:false`, honest no-ISRC/additive capabilities, all
+  methods reject `provider_unavailable:youtube`. Registered; `/api/providers` exposes `available`.
+  Excluded from the Operation dropdowns/default/prefill. Test: `providers/youtube/provider.test.ts`.
+- Validation: 4-persona workflow (`wf_f68441d1-979`); resolved 1 HIGH (img a11y → decorative) + 1 LOW
+  (single-source the icons at repo-root `assets/`, drop the `web/src/assets/` copy, `fs.allow`).
+
+## 2026-06-05 — Full v2 audit cleanup (no YouTube) — branch `v2/audit-cleanup`
+
+- Ran a **7-persona full-v2 audit** (`wf_9fba5509-690`: docs-truthfulness, security/invariants,
+  test-coverage, code-quality, a11y, build/deploy, definition-of-done) → 43 findings → synthesized,
+  deduplicated backlog. Worked the MUST/SHOULD/LOW items (YouTube + ⏸E publish + live verification
+  left out, the latter as human-gated).
+- **Code (registry-driven dispatch)**: operations-route source/destination validation now uses the
+  registry (`hasProvider` + `available !== false`) not a hardcoded spotify/apple literal; write batch
+  size moved onto a new `deps.writeBatchSize()` seam reading provider capabilities (runner no longer
+  reaches the registry); `/api/catalog` `last_fetched` is registry-driven; ledger `Platform` widened
+  to a provider id. `startHttpServer()` now registers built-ins (idempotent) so any caller gets a
+  populated registry. All byte-identical for spotify/apple (capabilities derive from the same client
+  batch constants); 450 PASS / 0 FAIL.
+- **Security**: `.env` auto-chmod to 0600 at startup (`ensureEnvPerms`, mirrors the `.p8` hardening).
+- **Tests (+39)**: `http/session_gate.test.ts` (the V6 access gate end-to-end — biggest untested
+  security path), `config.test.ts` (env-driven derivations + `parsePort` fail-fast), `builtin.test.ts`
+  (built-in registration + additive-only `supportsLikedRemoval:false` at runtime), `/api/providers`
+  shape assertion. **Cleanups**: dead `AppConfig` deleted; preflight test uses `CHECKS.length`.
+- **Docs (truthfulness sweep)**: README rewritten for the v2 stack/commands/scope + DEPLOY pointer;
+  blueprint §2/§3/§11.0/§11.3/§14/§1 reconciled to the shipped Hono+Solid+workspaces reality and the
+  A1–A3 amendments (no more node:http / vanilla-UI / loopback-only / "nine phases" claims); DEPLOY.md
+  env-copy made explicit; new §15 amendment row.
+- **Status**: **v2 (V0–V6) is delivery-complete.** Remaining is human-gated (⏸E GitHub publish, live
+  end-to-end transfer verification, real network deploy) + the deferred YouTube Music integration.

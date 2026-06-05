@@ -42,8 +42,13 @@ When you register the Spotify app, add your **public** redirect URI
 
 ## 2. Configuration (`.env`)
 
-Copy `server/.env.example` to `.env` at the repo root (compose reads it) and fill it in. Network +
-access keys (all optional — omitting them = loopback/local behavior):
+Create the env file at the repo root (compose reads `.env` there) and fill it in:
+
+```bash
+cp server/.env.example .env   # the only template lives in server/; compose reads ./.env
+```
+
+Network + access keys (all optional — omitting them = loopback/local behavior):
 
 | Key | Default | Purpose |
 | --- | --- | --- |
