@@ -8,6 +8,7 @@
 // (the path is hardcoded to LEDGER_PATH), the snapshot-restore guard is
 // the simplest correct approach.
 
+import Database from "better-sqlite3";
 import { closeLedger, openLedger, LATEST_SCHEMA_VERSION } from "./db.js";
 import { LEDGER_PATH } from "../config.js";
 import { copyFileSync, existsSync, unlinkSync } from "node:fs";
@@ -61,7 +62,7 @@ assert(version === LATEST_SCHEMA_VERSION, `AC1: schema_version = ${LATEST_SCHEMA
 
 const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[])
   .map((r) => r.name);
-for (const t of ["tracks", "catalog", "preflight_runs", "preflight_checks", "operations", "operation_events", "schema_version"]) {
+for (const t of ["tracks", "catalog", "preflight_runs", "preflight_checks", "operations", "operation_events", "schema_version", "users", "track_provider_ids"]) {
   assert(tables.includes(t), `AC1: table "${t}" present`);
 }
 
@@ -69,6 +70,14 @@ const indexes = (db.prepare("SELECT name FROM sqlite_master WHERE type='index' A
   .map((r) => r.name);
 assert(indexes.includes("one_running_op"), "AC1: partial unique index 'one_running_op' present");
 assert(indexes.includes("one_running_preflight"), "AC1: partial unique index 'one_running_preflight' present");
+
+// ── v2 schema (migration #2) — users + user_id columns ──────────────────
+const owner = db.prepare("SELECT id FROM users WHERE id = '__owner__'").get() as { id: string } | undefined;
+assert(owner?.id === "__owner__", "v2: users table seeded with __owner__");
+for (const tbl of ["catalog", "operations", "preflight_runs"]) {
+  const cols = (db.prepare(`PRAGMA table_info(${tbl})`).all() as { name: string }[]).map((c) => c.name);
+  assert(cols.includes("user_id"), `v2: ${tbl}.user_id column present`);
+}
 
 // ── AC #4 — startup reconciliation sweep ─────────────────────────────────
 //
@@ -117,6 +126,60 @@ closeLedger();
 const db3 = openLedger();
 const evt2 = db3.prepare("SELECT COUNT(*) AS n FROM operation_events WHERE operation_id=?").get("ac4-test-op") as { n: number };
 assert(evt2.n === 1, `AC4: idempotent sweep — still exactly 1 event (got ${evt2.n})`);
+
+closeLedger();
+
+// ── Migration #2: real v1 ledger → v2, backfill + zero data loss ─────────
+// Build a fresh v1 ledger (schema_version=1) with representative data, then
+// reopen via openLedger() to run migration #2 and assert nothing is lost and
+// the per-platform columns are backfilled into track_provider_ids.
+for (const f of [LEDGER_PATH, `${LEDGER_PATH}-wal`, `${LEDGER_PATH}-shm`]) {
+  if (existsSync(f)) unlinkSync(f);
+}
+
+const v1 = new Database(LEDGER_PATH);
+v1.exec(`
+  CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
+  CREATE TABLE tracks ( identity_key TEXT PRIMARY KEY, isrc TEXT, norm_title TEXT, norm_artist TEXT, duration_ms INTEGER, spotify_id TEXT, apple_catalog_id TEXT, apple_library_id TEXT, match_tier TEXT, confidence INTEGER, updated_at TEXT );
+  CREATE TABLE catalog ( platform TEXT NOT NULL, kind TEXT NOT NULL, external_id TEXT NOT NULL, name TEXT, owner TEXT, track_count INTEGER, url TEXT, fetched_at TEXT, PRIMARY KEY (platform, kind, external_id) );
+  CREATE TABLE preflight_runs ( id TEXT PRIMARY KEY, started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, trigger TEXT NOT NULL, surface TEXT NOT NULL );
+  CREATE TABLE preflight_checks ( run_id TEXT NOT NULL, seq INTEGER NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL, detail TEXT, duration_ms INTEGER, PRIMARY KEY (run_id, seq) );
+  CREATE TABLE operations ( id TEXT PRIMARY KEY, created_at TEXT NOT NULL, finished_at TEXT, source TEXT NOT NULL, destination TEXT NOT NULL, source_target TEXT NOT NULL, destination_target TEXT NOT NULL, status TEXT NOT NULL, summary TEXT );
+  CREATE TABLE operation_events ( operation_id TEXT NOT NULL, seq INTEGER NOT NULL, ts TEXT NOT NULL, type TEXT NOT NULL, payload TEXT, PRIMARY KEY (operation_id, seq) );
+`);
+const nowIso = new Date().toISOString();
+v1.prepare("INSERT INTO schema_version(version) VALUES (1)").run();
+// Two v1-cached tracks: one with both ids (spotify→apple), one spotify-only.
+v1.prepare("INSERT INTO tracks (identity_key, isrc, norm_title, norm_artist, duration_ms, spotify_id, apple_catalog_id, apple_library_id, match_tier, confidence, updated_at) VALUES ('isrc:MIGV1000001','MIGV1000001','t1','a1',200000,'sp-mig-1','ap-mig-1',NULL,'isrc',100,?)").run(nowIso);
+v1.prepare("INSERT INTO tracks (identity_key, isrc, norm_title, norm_artist, duration_ms, spotify_id, apple_catalog_id, apple_library_id, match_tier, confidence, updated_at) VALUES ('isrc:MIGV1000002','MIGV1000002','t2','a2',180000,'sp-mig-2',NULL,NULL,'isrc',100,?)").run(nowIso);
+v1.prepare("INSERT INTO catalog (platform, kind, external_id, name, fetched_at) VALUES ('spotify','playlist','pl-1','My PL',?)").run(nowIso);
+v1.prepare("INSERT INTO operations (id, created_at, source, destination, source_target, destination_target, status) VALUES ('op-mig-1',?,'spotify','apple','{\"kind\":\"liked\"}','{\"kind\":\"favorites\"}','succeeded')").run(nowIso);
+const n = (sql: string): number => (v1.prepare(sql).get() as { n: number }).n;
+const tracksBefore = n("SELECT COUNT(*) n FROM tracks");
+const catalogBefore = n("SELECT COUNT(*) n FROM catalog");
+const opsBefore = n("SELECT COUNT(*) n FROM operations");
+v1.close();
+
+// Reopen via the real openLedger → applies migration #2.
+const mdb = openLedger();
+const mver = (mdb.prepare("SELECT version FROM schema_version").get() as { version: number }).version;
+assert(mver === 2, `migration: v1 ledger upgraded to schema_version 2 (got ${mver})`);
+
+const m = (sql: string): number => (mdb.prepare(sql).get() as { n: number }).n;
+assert(m("SELECT COUNT(*) n FROM tracks") === tracksBefore, "migration: tracks row count unchanged (zero data loss)");
+assert(m("SELECT COUNT(*) n FROM catalog") === catalogBefore, "migration: catalog row count unchanged");
+assert(m("SELECT COUNT(*) n FROM operations") === opsBefore, "migration: operations row count unchanged");
+
+const ref = (k: string, p: string): string | undefined =>
+  (mdb.prepare("SELECT provider_ref r FROM track_provider_ids WHERE identity_key=? AND provider_id=? AND provider_kind='default'").get(k, p) as { r: string } | undefined)?.r;
+assert(ref("isrc:MIGV1000001", "spotify") === "sp-mig-1", "migration backfill: spotify_id → track_provider_ids");
+assert(ref("isrc:MIGV1000001", "apple") === "ap-mig-1", "migration backfill: apple_catalog_id → track_provider_ids");
+assert(ref("isrc:MIGV1000002", "spotify") === "sp-mig-2", "migration backfill: spotify-only track backfilled");
+assert(ref("isrc:MIGV1000002", "apple") === undefined, "migration backfill: no apple ref for a spotify-only track");
+assert(m("SELECT COUNT(*) n FROM track_provider_ids") === 3, `migration backfill: 3 provider refs created (2 spotify + 1 apple)`);
+
+const opUser = (mdb.prepare("SELECT user_id FROM operations WHERE id='op-mig-1'").get() as { user_id: string }).user_id;
+assert(opUser === "__owner__", `migration: existing operations row backfilled user_id=__owner__ (got ${opUser})`);
 
 closeLedger();
 

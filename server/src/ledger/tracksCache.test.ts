@@ -1,13 +1,20 @@
-// Direct unit tests for the ledger tracks-cache layer (finding #20). Focuses
-// on the COALESCE preservation invariant that the matcher relies on for
-// cross-direction id retention.
+// Direct unit tests for the ledger tracks-cache layer (v2: generalized onto
+// track_provider_ids). Covers identity round-trip, per-provider write-id
+// put/get, upsert, provider_kind distinction, and delete-cascade.
 //
 // Snapshot/restore the real ledger; restore on exit AND SIGINT.
 
 import { existsSync, copyFileSync, unlinkSync } from "node:fs";
 import { LEDGER_PATH } from "../config.js";
 import { closeLedger, openLedger } from "./db.js";
-import { getCachedTrack, putCachedTrack, deleteCachedTrack, type CachedTrack } from "./tracksCache.js";
+import {
+  getCachedTrack,
+  putCachedTrack,
+  deleteCachedTrack,
+  putProviderRef,
+  getProviderRef,
+  type CachedTrack,
+} from "./tracksCache.js";
 
 const SNAPSHOT = LEDGER_PATH + ".trackscache-test-snapshot";
 const _had = existsSync(LEDGER_PATH);
@@ -37,54 +44,46 @@ const base: CachedTrack = {
   norm_title: "test title",
   norm_artist: "test artist",
   duration_ms: 200_000,
-  spotify_id: "sp-1",
-  apple_catalog_id: undefined,
-  apple_library_id: undefined,
   match_tier: "isrc",
   confidence: 100,
   updated_at: new Date().toISOString(),
 };
 
-// (a) round-trip
+// (a) identity round-trip
 putCachedTrack(base);
 const got = getCachedTrack(base.identity_key);
-assert(got?.spotify_id === "sp-1" && got?.isrc === "TESTCACHE0001", "round-trip: exact row");
-assert(got?.norm_title === "test title" && got?.confidence === 100, "round-trip: fields preserved");
+assert(got?.isrc === "TESTCACHE0001" && got?.norm_title === "test title", "round-trip: identity fields");
+assert(got?.confidence === 100 && got?.match_tier === "isrc", "round-trip: match metadata");
 assert(getCachedTrack("isrc:DOES_NOT_EXIST") === undefined, "miss → undefined");
 
-// (b) COALESCE preserves the OTHER direction's id on a second put.
-// Second put writes apple_catalog_id but leaves spotify_id undefined; the
-// stored spotify_id must survive.
-putCachedTrack({ ...base, spotify_id: undefined, apple_catalog_id: "ap-1" });
-const merged = getCachedTrack(base.identity_key);
-assert(merged?.apple_catalog_id === "ap-1", `COALESCE: apple id added (got ${merged?.apple_catalog_id})`);
-assert(merged?.spotify_id === "sp-1", `COALESCE: spotify id preserved when new put omits it (got ${merged?.spotify_id})`);
+// (b) per-provider write-ids: distinct providers coexist (bidirectional cache)
+putProviderRef(base.identity_key, "spotify", "sp-1");
+putProviderRef(base.identity_key, "apple", "ap-1");
+assert(getProviderRef(base.identity_key, "spotify") === "sp-1", "provider ref: spotify");
+assert(getProviderRef(base.identity_key, "apple") === "ap-1", "provider ref: apple coexists with spotify");
+assert(getProviderRef(base.identity_key, "youtube") === undefined, "provider ref: missing provider → undefined");
 
-// (c) reverse — putting undefined apple_library_id doesn't wipe an existing one
-putCachedTrack({ ...base, spotify_id: undefined, apple_catalog_id: undefined, apple_library_id: "lib-1" });
-const withLib = getCachedTrack(base.identity_key);
-assert(withLib?.apple_library_id === "lib-1", "COALESCE: library id set");
-putCachedTrack({ ...base, spotify_id: undefined, apple_catalog_id: undefined, apple_library_id: undefined });
-const stillLib = getCachedTrack(base.identity_key);
-assert(stillLib?.apple_library_id === "lib-1", `COALESCE: library id preserved against undefined put (got ${stillLib?.apple_library_id})`);
-assert(stillLib?.spotify_id === "sp-1" && stillLib?.apple_catalog_id === "ap-1", "COALESCE: both ids still present after undefined puts");
+// (c) upsert overwrites the same (key, provider, kind)
+putProviderRef(base.identity_key, "apple", "ap-2");
+assert(getProviderRef(base.identity_key, "apple") === "ap-2", "provider ref: upsert overwrites");
+assert(getProviderRef(base.identity_key, "spotify") === "sp-1", "provider ref: upsert leaves other provider intact");
 
-// (d) updated non-COALESCE fields DO overwrite (confidence, match_tier, norm_*)
-putCachedTrack({ ...base, spotify_id: undefined, apple_catalog_id: undefined, confidence: 73, match_tier: "search", norm_title: "new title" });
+// (d) provider_kind distinguishes the matching id from Apple's library id
+putProviderRef(base.identity_key, "apple", "lib-1", "library");
+assert(getProviderRef(base.identity_key, "apple") === "ap-2", "provider_kind: default id unchanged");
+assert(getProviderRef(base.identity_key, "apple", "library") === "lib-1", "provider_kind: library id separate");
+
+// (e) identity re-put overwrites match metadata (provider refs untouched)
+putCachedTrack({ ...base, confidence: 73, match_tier: "search", norm_title: "new title" });
 const updated = getCachedTrack(base.identity_key);
 assert(updated?.confidence === 73 && updated?.match_tier === "search", "overwrite: confidence + tier replaced");
 assert(updated?.norm_title === "new title", "overwrite: norm_title replaced");
+assert(getProviderRef(base.identity_key, "spotify") === "sp-1", "overwrite: provider refs survive identity re-put");
 
-// (e) delete
+// (f) delete cascades the provider refs (FK ON DELETE CASCADE)
 deleteCachedTrack(base.identity_key);
-assert(getCachedTrack(base.identity_key) === undefined, "delete: row gone");
-
-// (f) sqlite NULL columns come back as JS null (documented behavior the
-// matcher's cacheHit coerces). Verify get returns null (not undefined) for an
-// unset nullable column so the matcher's nn() coercion is actually needed.
-putCachedTrack({ ...base, identity_key: "fuzzy:nulltest", isrc: undefined, spotify_id: "sp-x", apple_catalog_id: undefined });
-const nullRow = getCachedTrack("fuzzy:nulltest");
-assert(nullRow?.isrc === null || nullRow?.isrc === undefined, `NULL column: isrc is null/undefined (got ${JSON.stringify(nullRow?.isrc)})`);
-deleteCachedTrack("fuzzy:nulltest");
+assert(getCachedTrack(base.identity_key) === undefined, "delete: identity row gone");
+assert(getProviderRef(base.identity_key, "spotify") === undefined, "delete: provider refs cascaded away");
+assert(getProviderRef(base.identity_key, "apple") === undefined, "delete: all provider refs cascaded");
 
 process.exit(process.exitCode ?? 0);

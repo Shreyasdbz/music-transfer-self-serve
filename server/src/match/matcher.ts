@@ -19,10 +19,10 @@
 // maps provider id → the v1 schema's spotify_id / apple_catalog_id columns
 // (the generalized `track_provider_ids` table lands in phase V2).
 
-import { getCachedTrack, putCachedTrack, type CachedTrack } from "../ledger/tracksCache.js";
+import { getCachedTrack, putCachedTrack, getProviderRef, putProviderRef } from "../ledger/tracksCache.js";
 import { durationsClose, identityKey, normalize, normArtist, normTitle, type CanonicalTrack } from "./identity.js";
 import { isAccepted, score, SCORE_ACCEPT_THRESHOLD, DURATION_TOLERANCE_MS, type ScoreBreakdown } from "./scoring.js";
-import { OWNER, type MusicProvider, type ProviderId } from "../providers/types.js";
+import { OWNER, type MusicProvider } from "../providers/types.js";
 
 // ── Result types ───────────────────────────────────────────────────────
 
@@ -130,34 +130,11 @@ function bestScored(
   return best;
 }
 
-// ── Ledger cache (provider-keyed; v1 schema until V2 generalizes) ───────
+// ── Ledger cache (provider-keyed via track_provider_ids; v2) ────────────
 
 /** sqlite NULL → JS null; coerce to undefined for `string | undefined` fields. */
 function nn<T>(v: T | null | undefined): T | undefined {
   return v === null || v === undefined ? undefined : v;
-}
-
-/** The cached destination id for a provider, read from the v1 per-platform
- * columns. Returns undefined for providers without a column yet (e.g. YouTube),
- * which simply means "no cache hit" until V2's `track_provider_ids` lands. */
-function providerColumnId(row: CachedTrack, providerId: ProviderId): string | undefined {
-  if (providerId === "spotify") return nn(row.spotify_id);
-  if (providerId === "apple") return nn(row.apple_catalog_id);
-  return undefined;
-}
-
-/** The id to store in a given platform column when persisting a match: the
- * source id if the source IS that platform, else the destination id if the
- * destination is that platform, else undefined (COALESCE preserves existing). */
-function columnIdFor(
-  platform: ProviderId,
-  source: CanonicalTrack,
-  destProvider: MusicProvider,
-  destId: string,
-): string | undefined {
-  if (source.source === platform) return source.sourceId;
-  if (destProvider.id === platform) return destId;
-  return undefined;
 }
 
 function cacheHit(source: CanonicalTrack, destProvider: MusicProvider): MatchResult | undefined {
@@ -176,7 +153,9 @@ function cacheHit(source: CanonicalTrack, destProvider: MusicProvider): MatchRes
     if (!titleOk || !artistOk || !durOk) return undefined;
   }
 
-  const destId = providerColumnId(row, destProvider.id);
+  // The destination write-id from the generalized provider-id table (backfilled
+  // from the v1 columns by migration #2, so a v1-cached match still resolves).
+  const destId = getProviderRef(key, destProvider.id);
   if (!destId) return undefined;
 
   // `canonical` on a cache hit carries the NORMALIZED identity fields (the §9
@@ -210,20 +189,23 @@ function cacheHit(source: CanonicalTrack, destProvider: MusicProvider): MatchRes
  * (§12.5: catalogs drift, so an unmatched track must be retried next run). */
 function persist(source: CanonicalTrack, destProvider: MusicProvider, result: MatchResult): void {
   if (result.tier === "unmatched" || !result.destination) return;
-  const destId = result.destination.id;
+  const key = identityKey(source);
   putCachedTrack({
-    identity_key: identityKey(source),
+    identity_key: key,
     isrc: result.destination.isrc ?? source.isrc,
     norm_title: normTitle(source.title),
     norm_artist: normArtist(source.primaryArtist),
     duration_ms: source.durationMs,
-    spotify_id: columnIdFor("spotify", source, destProvider, destId),
-    apple_catalog_id: columnIdFor("apple", source, destProvider, destId),
-    apple_library_id: undefined, // populated when a library write happens
     match_tier: result.tier,
     confidence: result.confidence,
     updated_at: new Date().toISOString(),
   });
+  // Record BOTH sides' write-ids so a later run in either direction hits the
+  // cache (bidirectional caching, same as v1). The same-provider guard in
+  // matchToDestination ensures source.source !== destProvider.id, so these two
+  // writes never collide on the same provider key.
+  putProviderRef(key, source.source, source.sourceId);
+  putProviderRef(key, destProvider.id, result.destination.id);
 }
 
 // ── Public entrypoint ──────────────────────────────────────────────────

@@ -6,7 +6,7 @@
 import { existsSync, copyFileSync, unlinkSync } from "node:fs";
 import { LEDGER_PATH } from "../config.js";
 import { closeLedger, openLedger } from "../ledger/db.js";
-import { putCachedTrack } from "../ledger/tracksCache.js";
+import { putCachedTrack, putProviderRef } from "../ledger/tracksCache.js";
 import {
   durationsClose,
   identityKey,
@@ -193,13 +193,12 @@ putCachedTrack({
   norm_title: normTitle(cachedSource.title),
   norm_artist: normArtist(cachedSource.primaryArtist),
   duration_ms: cachedSource.durationMs,
-  spotify_id: cachedSource.sourceId,
-  apple_catalog_id: "apple-cached-id",
-  apple_library_id: undefined,
   match_tier: "isrc",
   confidence: 100,
   updated_at: new Date().toISOString(),
 });
+putProviderRef(identityKey(cachedSource), "spotify", cachedSource.sourceId);
+putProviderRef(identityKey(cachedSource), "apple", "apple-cached-id");
 
 // A fake apple destination whose search methods THROW — proving the cache hit
 // short-circuits before any live call.
@@ -404,13 +403,12 @@ const liveSource: CanonicalTrack = { isrc: "USUG10000001", title: "Real Song", p
     norm_title: "different title",
     norm_artist: "different artist",
     duration_ms: 60_000,
-    spotify_id: "intro-A",
-    apple_catalog_id: "apple-WRONG",
-    apple_library_id: undefined,
     match_tier: "search",
     confidence: 80,
     updated_at: new Date().toISOString(),
   });
+  putProviderRef(key, "spotify", "intro-A");
+  putProviderRef(key, "apple", "apple-WRONG");
   const dest = fakeDest("apple"); // empty searches → unmatched
   const r = await matchToDestination(collidingSource, dest); // cache allowed
   assert(!r.fromCache, "fuzzy guard: mismatched norm fields → cache miss, not the wrong destination");

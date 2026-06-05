@@ -16,7 +16,7 @@ import { dirname } from "node:path";
 import { DATA_DIR, LEDGER_PATH } from "../config.js";
 import { log } from "../util/log.js";
 
-export const LATEST_SCHEMA_VERSION = 1;
+export const LATEST_SCHEMA_VERSION = 2;
 
 type Migration = (db: DB) => void;
 
@@ -98,6 +98,62 @@ const MIGRATIONS: Record<number, Migration> = {
       );
     `);
   },
+
+  // v2 (blueprint §15 A2): multi-user-ready data seam + generalized provider-id
+  // storage. Forward-only, INSERT/ALTER-ADD only — NO row is deleted or
+  // rewritten, so a real v1 ledger migrates with zero data loss.
+  2: (db) => {
+    const now = new Date().toISOString();
+    db.exec(`
+      -- Explicit user dimension; single owner today (A2 seam — not multi-user yet).
+      CREATE TABLE users (
+        id         TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL
+      );
+
+      -- Generalized (identity_key, provider) to write-id mapping, replacing the
+      -- per-platform spotify_id / apple_catalog_id / apple_library_id columns on
+      -- the tracks table. Those columns are LEFT IN PLACE (SQLite drop-column is
+      -- awkward and they harm nothing); new code reads/writes here. provider_kind
+      -- keeps the apple catalog-vs-library distinction; matching uses 'default'.
+      CREATE TABLE track_provider_ids (
+        identity_key  TEXT NOT NULL,
+        provider_id   TEXT NOT NULL,
+        provider_kind TEXT NOT NULL DEFAULT 'default',
+        provider_ref  TEXT NOT NULL,
+        PRIMARY KEY (identity_key, provider_id, provider_kind),
+        FOREIGN KEY (identity_key) REFERENCES tracks(identity_key) ON DELETE CASCADE
+      );
+
+      CREATE INDEX track_provider_ids_by_provider
+        ON track_provider_ids(provider_id, provider_ref);
+    `);
+
+    db.prepare("INSERT OR IGNORE INTO users(id, created_at) VALUES ('__owner__', ?)").run(now);
+
+    // Backfill from the v1 per-platform columns (INSERT-only; zero data loss).
+    // spotify_id and apple_catalog_id are the matcher's write ids → 'default';
+    // apple_library_id (effectively always NULL in v1) keeps kind 'library'.
+    db.exec(`
+      INSERT OR IGNORE INTO track_provider_ids(identity_key, provider_id, provider_kind, provider_ref)
+        SELECT identity_key, 'spotify', 'default', spotify_id FROM tracks WHERE spotify_id IS NOT NULL;
+      INSERT OR IGNORE INTO track_provider_ids(identity_key, provider_id, provider_kind, provider_ref)
+        SELECT identity_key, 'apple', 'default', apple_catalog_id FROM tracks WHERE apple_catalog_id IS NOT NULL;
+      INSERT OR IGNORE INTO track_provider_ids(identity_key, provider_id, provider_kind, provider_ref)
+        SELECT identity_key, 'apple', 'library', apple_library_id FROM tracks WHERE apple_library_id IS NOT NULL;
+    `);
+
+    // Multi-user-ready: user dimension on user-scoped tables. Single owner now,
+    // so a constant DEFAULT backfills every existing row. The catalog PK rebuild
+    // to include user_id is DEFERRED until multi-user is activated (single owner
+    // can't collide); same for per-user scoping of reads. ALTER ADD COLUMN with a
+    // constant default is a metadata-only change in SQLite (no row rewrite).
+    db.exec(`
+      ALTER TABLE catalog        ADD COLUMN user_id TEXT NOT NULL DEFAULT '__owner__';
+      ALTER TABLE operations     ADD COLUMN user_id TEXT NOT NULL DEFAULT '__owner__';
+      ALTER TABLE preflight_runs ADD COLUMN user_id TEXT NOT NULL DEFAULT '__owner__';
+    `);
+  },
 };
 
 function ensureDir(path: string, mode: number): void {
@@ -124,14 +180,20 @@ function tightenFilePerms(path: string): void {
 }
 
 function getCurrentVersion(db: DB): number {
-  const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
-    | { version: number }
+  // MAX, not LIMIT 1: defensive against any ledger that accumulated multiple
+  // schema_version rows under the old INSERT-OR-REPLACE bug (the PK is the
+  // version itself, so OR-REPLACE inserted a new row instead of replacing).
+  const row = db.prepare("SELECT MAX(version) AS version FROM schema_version").get() as
+    | { version: number | null }
     | undefined;
   return row?.version ?? 0;
 }
 
 function setVersion(db: DB, version: number): void {
-  db.prepare("INSERT OR REPLACE INTO schema_version(version) VALUES (?)").run(version);
+  // Keep schema_version a single-row table. INSERT OR REPLACE does NOT replace
+  // here (the PK is `version`, so a new version is a new row), so delete first.
+  db.prepare("DELETE FROM schema_version").run();
+  db.prepare("INSERT INTO schema_version(version) VALUES (?)").run(version);
 }
 
 function runMigrations(db: DB): void {
