@@ -262,25 +262,36 @@ behavior-preserving + invariants intact, safe to merge. 6 findings, all low: #1 
 
 **Goal:** generalize provider-id storage + add the user dimension, forward-only, zero data loss.
 
-- [ ] `ledger/db.ts` — migration #2 (bump `LATEST_SCHEMA_VERSION` 1→2):
-  - [ ] `CREATE TABLE users(id TEXT PRIMARY KEY, created_at TEXT NOT NULL)`; seed `'__owner__'`.
-  - [ ] `CREATE TABLE track_provider_ids(identity_key, provider_id, provider_kind, provider_ref,
-        PRIMARY KEY(identity_key, provider_id, provider_kind), FK→tracks)`.
-  - [ ] **Backfill** `track_provider_ids` from `spotify_id` / `apple_catalog_id` /
-        `apple_library_id` via `INSERT ... SELECT` (old columns left in place).
-  - [ ] `ALTER TABLE catalog|operations|preflight_runs ADD COLUMN user_id TEXT NOT NULL DEFAULT
-        '__owner__'`; rebuild `catalog` PK → `(user_id, provider_id, kind, external_id)`.
-- [ ] `ledger/tracksCache.ts` — read/write via `track_provider_ids` (prefer new table; keyed by
-      `provider_id`). `cacheHit` → `(identity_key, destProvider.id)`.
-- [ ] `auth/tokens.ts` — reshape `data/tokens.json` to `{ [userId]: { [providerId]: TokenSlice } }`;
-      atomic write, 0600; v2 always `userId="__owner__"`.
-- [ ] §15 amendment: forward-only migration, INSERT-only backfill, no data loss.
+- [x] `ledger/db.ts` — migration #2 (`LATEST_SCHEMA_VERSION` 1→2):
+  - [x] `CREATE TABLE users(...)`; seed `'__owner__'`.
+  - [x] `CREATE TABLE track_provider_ids(identity_key, provider_id, provider_kind, provider_ref,
+        PRIMARY KEY(...), FK→tracks ON DELETE CASCADE)` + index.
+  - [x] **Backfill** from `spotify_id`→(spotify,default) / `apple_catalog_id`→(apple,default) /
+        `apple_library_id`→(apple,library); old columns left in place.
+  - [x] `ALTER TABLE catalog|operations|preflight_runs ADD COLUMN user_id ... DEFAULT '__owner__'`.
+        **Catalog PK rebuild DEFERRED** to multi-user activation (single owner can't collide).
+  - [x] **Bonus fix:** latent `schema_version` singleton-row bug (PK is `version` → `INSERT OR
+        REPLACE` appended a row); `setVersion` deletes-then-inserts, `getCurrentVersion` uses `MAX`.
+- [x] `ledger/tracksCache.ts` — generalized: identity row + `get/putProviderRef`; matcher
+      `cacheHit`/`persist` use them. `deleteCachedTrack` cascades the refs.
+- [ ] `auth/tokens.ts` reshape → **DEFERRED to V6** (lands with the session/user seam). Noted here.
+- [x] §15 amendment added (schema extended, forward-only, INSERT/ALTER-ADD only, zero data loss).
+- [x] **Test seams:** `__openLedgerAt(path)` + `__setLedgerInstance` so the migration test runs on a
+      throwaway temp ledger (never touches the real one).
 
-**AC:** opening a **real v1 `ledger.sqlite`** migrates to v2 with **zero row loss** (pre/post counts
-asserted in `db.test.ts`); a v1-cached match still resolves post-migration; `schema_version=2`;
-Phase-7 idempotency test still passes against the migrated cache.
+**AC:** ✅ a **real-shaped v1 `ledger.sqlite`** migrates to v2 with **zero row loss** (pre/post counts
+asserted), correct backfill (incl. library kind), `user_id` defaulting, `schema_version=2` (single
+row), and a **no-op on re-open**; a v1-cached match **resolves through the matcher** post-migration
+(end-to-end backfill→cacheHit). Real ledger confirmed intact (1610 tracks, integrity ok).
+**tsc + eslint clean · 373 PASS / 0 FAIL.**
 
-**Invariants:** non-destruction (INSERT-only); auditability strengthened (user attribution).
+**Validation:** 5-persona workflow (`wf_1a423645-581`) → migration zero-data-loss + safe, cache
+parity-preserving. 8 findings (all verified): 1 HIGH was a test-harness corruption risk (`db.test.ts`
+recreated the real ledger path) — **fixed** (temp-path migration test + sidecar-safe cleanup); the
+other 7 (medium/low) coverage gaps all **resolved**.
+
+**Invariants:** non-destruction (CREATE/INSERT/ALTER-ADD only — verified zero loss); auditability
+strengthened (user attribution).
 
 ---
 

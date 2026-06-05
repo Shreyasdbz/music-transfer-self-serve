@@ -15,9 +15,10 @@
 // Direction-agnostic: ONE `matchToDestination(source, destProvider)` replaces
 // the old per-direction functions. The provider returns already-canonical
 // candidates (it owns its ⇆canonical adapter), so the matcher imports no
-// clients. Resolved matches are cached in the ledger `tracks` table; the cache
-// maps provider id → the v1 schema's spotify_id / apple_catalog_id columns
-// (the generalized `track_provider_ids` table lands in phase V2).
+// clients. Resolved matches are cached in the ledger: the canonical identity in
+// `tracks`, and each side's destination write-id in `track_provider_ids` keyed
+// by provider id (get/putProviderRef) — so the cache generalizes to any number
+// of providers, not just spotify/apple.
 
 import { getCachedTrack, putCachedTrack, getProviderRef, putProviderRef } from "../ledger/tracksCache.js";
 import { durationsClose, identityKey, normalize, normArtist, normTitle, type CanonicalTrack } from "./identity.js";

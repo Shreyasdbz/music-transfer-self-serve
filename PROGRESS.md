@@ -1287,3 +1287,35 @@ A2 multi-user-ready seam, A3 session cookie) gate the build.
   +45 from the new provider/deps/registry tests and the migrated matcher tests). No spec move → no
   §15 row. **Next**: Phase V2 — ledger forward-migration (`users`, `track_provider_ids` + backfill,
   `user_id` columns), which also generalizes the matcher cache off the v1 per-platform columns.
+
+### 2026-06-05 — Phase V2: ledger migration #2 (branch `v2/ledger-migration`)
+
+- **Start**: forward-only ledger migration generalizing the match cache off the per-platform
+  columns and standing up the multi-user-ready data seam (A2), with zero-data-loss as the gate.
+- **Decisions**:
+  - Migration #2 (`db.ts`): `users` (+ `__owner__`), `track_provider_ids` ((identity_key,
+    provider_id, provider_kind) → write id; FK ON DELETE CASCADE), backfilled from
+    spotify_id/apple_catalog_id/apple_library_id (columns LEFT IN PLACE), and `user_id` columns on
+    catalog/operations/preflight_runs. CREATE/INSERT/ALTER-ADD only → no row deleted or rewritten.
+  - Caught + fixed a **latent `schema_version` bug**: PK is `version`, so the old `INSERT OR REPLACE`
+    appended a second row instead of replacing → `setVersion` deletes-then-inserts (single row);
+    `getCurrentVersion` uses `MAX` defensively.
+  - `tracksCache` generalized: identity row + `get/putProviderRef`; matcher `cacheHit`/`persist`
+    use them (bidirectional, parity-equivalent to v1 for spotify↔apple). Deferred: catalog PK
+    rebuild, per-user read scoping, token-store reshape (→ V6 session seam).
+- **Validation**: 5-persona adversarial workflow + synthesis (`wf_1a423645-581`), weighted toward
+  data-loss safety. Verdict: **migration is zero-data-loss + safe on the real ledger; cache is
+  parity-preserving**. 8 findings, all verified (no false positives). The **one HIGH** was in the
+  test harness, not the migration: `db.test.ts`'s migration phase recreated the real `LEDGER_PATH`
+  with a foreign synthetic DB — a kill mid-window could corrupt the user's real 1610-track ledger
+  via a stale WAL. **Fixed**: added `__openLedgerAt(path)` / `__setLedgerInstance` seams; the
+  migration test now runs entirely on a throwaway temp ledger (never touches the real one), and
+  `cleanup()` deletes WAL/SHM sidecars before restore. Resolved all 7 remaining (medium/low)
+  coverage gaps: library-kind backfill, reopen-already-v2 no-op, single-schema_version-row,
+  faithful v1 indexes, **end-to-end migration-backfill → matcher cache hit**, bidirectional
+  persist round-trip, and a stale comment.
+- **Result**: **AC met.** Migration verified zero-data-loss on a synthetic real-shaped v1 ledger
+  (counts unchanged, correct backfill, `user_id` defaulting, no-op on re-open). Real ledger
+  confirmed intact post-test (schema_version=1, 1610 tracks, integrity ok) — the real migration runs
+  when the server is next started. `tsc` + eslint clean, **373 PASS / 0 FAIL**. §15 amendment added
+  (schema extended, forward-only, zero-loss). **Next**: Phase V3 — Hono server migration.

@@ -9,9 +9,15 @@
 // the simplest correct approach.
 
 import Database from "better-sqlite3";
-import { closeLedger, openLedger, LATEST_SCHEMA_VERSION } from "./db.js";
+import { closeLedger, openLedger, __openLedgerAt, __setLedgerInstance, LATEST_SCHEMA_VERSION } from "./db.js";
 import { LEDGER_PATH } from "../config.js";
 import { copyFileSync, existsSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { matchToDestination } from "../match/matcher.js";
+import type { CanonicalTrack } from "../match/identity.js";
+import type { DestTrack, MusicProvider, UserCtx } from "../providers/types.js";
+import type { ResolvedTarget } from "../operation/types.js";
 
 const SNAPSHOT = LEDGER_PATH + ".test-snapshot";
 const _hadLedger = existsSync(LEDGER_PATH);
@@ -22,6 +28,13 @@ function cleanup(): void {
     closeLedger();
   } catch {
     /* ignore */
+  }
+  // Drop any live WAL/SHM sidecars BEFORE restoring the main file, so a restore
+  // can never leave a stale journal that SQLite would replay over the snapshot.
+  for (const side of [`${LEDGER_PATH}-wal`, `${LEDGER_PATH}-shm`]) {
+    if (existsSync(side)) {
+      try { unlinkSync(side); } catch { /* ignore */ }
+    }
   }
   if (_hadLedger) {
     copyFileSync(SNAPSHOT, LEDGER_PATH);
@@ -130,28 +143,44 @@ assert(evt2.n === 1, `AC4: idempotent sweep — still exactly 1 event (got ${evt
 closeLedger();
 
 // ── Migration #2: real v1 ledger → v2, backfill + zero data loss ─────────
-// Build a fresh v1 ledger (schema_version=1) with representative data, then
-// reopen via openLedger() to run migration #2 and assert nothing is lost and
-// the per-platform columns are backfilled into track_provider_ids.
-for (const f of [LEDGER_PATH, `${LEDGER_PATH}-wal`, `${LEDGER_PATH}-shm`]) {
-  if (existsSync(f)) unlinkSync(f);
-}
+// Runs ENTIRELY on a throwaway temp ledger (via __openLedgerAt) so it can never
+// touch — let alone corrupt — the user's real ledger.
+const TMP = join(tmpdir(), `mtss-mig-test-${process.pid}.sqlite`);
+const cleanTmp = (): void => {
+  for (const f of [TMP, `${TMP}-wal`, `${TMP}-shm`]) {
+    if (existsSync(f)) {
+      try { unlinkSync(f); } catch { /* ignore */ }
+    }
+  }
+};
+cleanTmp();
 
-const v1 = new Database(LEDGER_PATH);
+// Build a faithful v1 ledger (schema_version=1) — same tables AND indexes as
+// migration #1 — with representative data, including an apple_library_id track
+// to exercise the 'library'-kind backfill.
+const v1 = new Database(TMP);
 v1.exec(`
   CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
   CREATE TABLE tracks ( identity_key TEXT PRIMARY KEY, isrc TEXT, norm_title TEXT, norm_artist TEXT, duration_ms INTEGER, spotify_id TEXT, apple_catalog_id TEXT, apple_library_id TEXT, match_tier TEXT, confidence INTEGER, updated_at TEXT );
   CREATE TABLE catalog ( platform TEXT NOT NULL, kind TEXT NOT NULL, external_id TEXT NOT NULL, name TEXT, owner TEXT, track_count INTEGER, url TEXT, fetched_at TEXT, PRIMARY KEY (platform, kind, external_id) );
   CREATE TABLE preflight_runs ( id TEXT PRIMARY KEY, started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, trigger TEXT NOT NULL, surface TEXT NOT NULL );
+  CREATE UNIQUE INDEX one_running_preflight ON preflight_runs(status) WHERE status = 'running';
   CREATE TABLE preflight_checks ( run_id TEXT NOT NULL, seq INTEGER NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL, detail TEXT, duration_ms INTEGER, PRIMARY KEY (run_id, seq) );
   CREATE TABLE operations ( id TEXT PRIMARY KEY, created_at TEXT NOT NULL, finished_at TEXT, source TEXT NOT NULL, destination TEXT NOT NULL, source_target TEXT NOT NULL, destination_target TEXT NOT NULL, status TEXT NOT NULL, summary TEXT );
+  CREATE UNIQUE INDEX one_running_op ON operations(status) WHERE status = 'running';
+  CREATE INDEX preflight_runs_finished ON preflight_runs(finished_at DESC);
+  CREATE INDEX operations_finished ON operations(finished_at DESC);
   CREATE TABLE operation_events ( operation_id TEXT NOT NULL, seq INTEGER NOT NULL, ts TEXT NOT NULL, type TEXT NOT NULL, payload TEXT, PRIMARY KEY (operation_id, seq) );
 `);
 const nowIso = new Date().toISOString();
 v1.prepare("INSERT INTO schema_version(version) VALUES (1)").run();
-// Two v1-cached tracks: one with both ids (spotify→apple), one spotify-only.
-v1.prepare("INSERT INTO tracks (identity_key, isrc, norm_title, norm_artist, duration_ms, spotify_id, apple_catalog_id, apple_library_id, match_tier, confidence, updated_at) VALUES ('isrc:MIGV1000001','MIGV1000001','t1','a1',200000,'sp-mig-1','ap-mig-1',NULL,'isrc',100,?)").run(nowIso);
+// Three v1-cached tracks: spotify+apple, spotify-only, and one with all three
+// ids (the third exercises the 'library'-kind backfill).
+// track1 uses a VALID ISRC so the end-to-end matcher test below can compute the
+// same identity_key and hit the backfilled cache.
+v1.prepare("INSERT INTO tracks (identity_key, isrc, norm_title, norm_artist, duration_ms, spotify_id, apple_catalog_id, apple_library_id, match_tier, confidence, updated_at) VALUES ('isrc:USUG12604763','USUG12604763','t1','a1',200000,'sp-mig-1','ap-mig-1',NULL,'isrc',100,?)").run(nowIso);
 v1.prepare("INSERT INTO tracks (identity_key, isrc, norm_title, norm_artist, duration_ms, spotify_id, apple_catalog_id, apple_library_id, match_tier, confidence, updated_at) VALUES ('isrc:MIGV1000002','MIGV1000002','t2','a2',180000,'sp-mig-2',NULL,NULL,'isrc',100,?)").run(nowIso);
+v1.prepare("INSERT INTO tracks (identity_key, isrc, norm_title, norm_artist, duration_ms, spotify_id, apple_catalog_id, apple_library_id, match_tier, confidence, updated_at) VALUES ('isrc:MIGV1000003','MIGV1000003','t3','a3',210000,'sp-mig-3','ap-mig-3','lib-mig-3','isrc',100,?)").run(nowIso);
 v1.prepare("INSERT INTO catalog (platform, kind, external_id, name, fetched_at) VALUES ('spotify','playlist','pl-1','My PL',?)").run(nowIso);
 v1.prepare("INSERT INTO operations (id, created_at, source, destination, source_target, destination_target, status) VALUES ('op-mig-1',?,'spotify','apple','{\"kind\":\"liked\"}','{\"kind\":\"favorites\"}','succeeded')").run(nowIso);
 const n = (sql: string): number => (v1.prepare(sql).get() as { n: number }).n;
@@ -160,27 +189,85 @@ const catalogBefore = n("SELECT COUNT(*) n FROM catalog");
 const opsBefore = n("SELECT COUNT(*) n FROM operations");
 v1.close();
 
-// Reopen via the real openLedger → applies migration #2.
-const mdb = openLedger();
-const mver = (mdb.prepare("SELECT version FROM schema_version").get() as { version: number }).version;
+// Migrate the temp ledger → v2.
+const mdb = __openLedgerAt(TMP);
+const mver = (mdb.prepare("SELECT MAX(version) v FROM schema_version").get() as { v: number }).v;
 assert(mver === 2, `migration: v1 ledger upgraded to schema_version 2 (got ${mver})`);
+assert(n2(mdb, "SELECT COUNT(*) n FROM schema_version") === 1, "migration: schema_version collapsed to a single row (not the INSERT-OR-REPLACE bug)");
 
-const m = (sql: string): number => (mdb.prepare(sql).get() as { n: number }).n;
-assert(m("SELECT COUNT(*) n FROM tracks") === tracksBefore, "migration: tracks row count unchanged (zero data loss)");
-assert(m("SELECT COUNT(*) n FROM catalog") === catalogBefore, "migration: catalog row count unchanged");
-assert(m("SELECT COUNT(*) n FROM operations") === opsBefore, "migration: operations row count unchanged");
+assert(n2(mdb, "SELECT COUNT(*) n FROM tracks") === tracksBefore, "migration: tracks row count unchanged (zero data loss)");
+assert(n2(mdb, "SELECT COUNT(*) n FROM catalog") === catalogBefore, "migration: catalog row count unchanged");
+assert(n2(mdb, "SELECT COUNT(*) n FROM operations") === opsBefore, "migration: operations row count unchanged");
 
-const ref = (k: string, p: string): string | undefined =>
-  (mdb.prepare("SELECT provider_ref r FROM track_provider_ids WHERE identity_key=? AND provider_id=? AND provider_kind='default'").get(k, p) as { r: string } | undefined)?.r;
-assert(ref("isrc:MIGV1000001", "spotify") === "sp-mig-1", "migration backfill: spotify_id → track_provider_ids");
-assert(ref("isrc:MIGV1000001", "apple") === "ap-mig-1", "migration backfill: apple_catalog_id → track_provider_ids");
+const ref = (k: string, p: string, kind = "default"): string | undefined =>
+  (mdb.prepare("SELECT provider_ref r FROM track_provider_ids WHERE identity_key=? AND provider_id=? AND provider_kind=?").get(k, p, kind) as { r: string } | undefined)?.r;
+assert(ref("isrc:USUG12604763", "spotify") === "sp-mig-1", "migration backfill: spotify_id → track_provider_ids");
+assert(ref("isrc:USUG12604763", "apple") === "ap-mig-1", "migration backfill: apple_catalog_id → track_provider_ids");
 assert(ref("isrc:MIGV1000002", "spotify") === "sp-mig-2", "migration backfill: spotify-only track backfilled");
 assert(ref("isrc:MIGV1000002", "apple") === undefined, "migration backfill: no apple ref for a spotify-only track");
-assert(m("SELECT COUNT(*) n FROM track_provider_ids") === 3, `migration backfill: 3 provider refs created (2 spotify + 1 apple)`);
+// library-kind backfill: coexists with the apple 'default' ref for the same key.
+assert(ref("isrc:MIGV1000003", "apple") === "ap-mig-3", "migration backfill: apple 'default' id for the all-ids track");
+assert(ref("isrc:MIGV1000003", "apple", "library") === "lib-mig-3", "migration backfill: apple_library_id → 'library' kind (coexists with 'default')");
+assert(n2(mdb, "SELECT COUNT(*) n FROM track_provider_ids") === 6, "migration backfill: 6 provider refs (3 spotify + 2 apple-default + 1 apple-library)");
 
 const opUser = (mdb.prepare("SELECT user_id FROM operations WHERE id='op-mig-1'").get() as { user_id: string }).user_id;
 assert(opUser === "__owner__", `migration: existing operations row backfilled user_id=__owner__ (got ${opUser})`);
 
-closeLedger();
+// End-to-end: the load-bearing V2 claim — a v1-cached match (now backfilled into
+// track_provider_ids) resolves through the MATCHER with no live search. Point
+// the engine at the migrated temp ledger and run matchToDestination on track1.
+__setLedgerInstance(mdb);
+const e2eSource: CanonicalTrack = { isrc: "USUG12604763", title: "t1", primaryArtist: "a1", artists: ["a1"], album: undefined, durationMs: 200_000, explicit: undefined, source: "spotify", sourceId: "sp-mig-1" };
+const e2eHit = await matchToDestination(e2eSource, appleDestThatThrows());
+assert(e2eHit.fromCache, "migration→matcher: backfilled v1 match resolves fromCache (no live search)");
+assert(e2eHit.destination?.id === "ap-mig-1", `migration→matcher: cache returns the backfilled apple id (got ${e2eHit.destination?.id})`);
+__setLedgerInstance(undefined);
+
+const tpiBefore = n2(mdb, "SELECT COUNT(*) n FROM track_provider_ids");
+mdb.close();
+
+// Re-open the already-v2 ledger → migration #2 must be a NO-OP (resume safety).
+const mdb2 = __openLedgerAt(TMP);
+assert((mdb2.prepare("SELECT MAX(version) v FROM schema_version").get() as { v: number }).v === 2, "re-open: schema_version stays 2");
+assert(n2(mdb2, "SELECT COUNT(*) n FROM schema_version") === 1, "re-open: still a single schema_version row");
+assert(n2(mdb2, "SELECT COUNT(*) n FROM users") === 1, "re-open: __owner__ not duplicated");
+assert(n2(mdb2, "SELECT COUNT(*) n FROM track_provider_ids") === tpiBefore, "re-open: backfill not re-run (provider ref count stable)");
+mdb2.close();
+cleanTmp();
 
 process.exit(process.exitCode ?? 0);
+
+// Small helper: COUNT against an explicit db handle (the migration phase uses
+// temp handles, not the openLedger singleton).
+function n2(db: InstanceType<typeof Database>, sql: string): number {
+  return (db.prepare(sql).get() as { n: number }).n;
+}
+
+// A destination provider whose search methods THROW — proves the end-to-end
+// match resolved from the backfilled cache without any live API call.
+function appleDestThatThrows(): MusicProvider {
+  const fail = (): never => {
+    throw new Error("backfilled_cache_should_not_search");
+  };
+  return {
+    id: "apple",
+    displayName: "Apple Music",
+    capabilities: {
+      supportsIsrc: true,
+      likedKind: "favorites",
+      likedReadable: false,
+      supportsLikedRemoval: false,
+      canCreatePlaylist: true,
+      playlistAppendOnly: true,
+      writeBatchAdd: 100,
+      writeBatchLike: 100,
+      searchLimit: 25,
+    },
+    searchByIsrc: async (_c: UserCtx, _i: readonly string[]): Promise<CanonicalTrack[]> => fail(),
+    searchByTerm: async (_c: UserCtx, _t: string, _l: number): Promise<CanonicalTrack[]> => fail(),
+    readSourceTracks: async (_c: UserCtx, _t: ResolvedTarget): Promise<CanonicalTrack[]> => fail(),
+    readDestinationTracks: async (_c: UserCtx, _t: ResolvedTarget): Promise<DestTrack[]> => fail(),
+    createPlaylistNamed: async (_c: UserCtx, _n: string): Promise<string> => fail(),
+    writeTracks: async (): Promise<void> => fail(),
+  };
+}

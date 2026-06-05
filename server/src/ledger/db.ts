@@ -263,28 +263,35 @@ function reconcileStrandedRunning(db: DB): void {
 
 let dbInstance: DB | undefined;
 
-export function openLedger(): DB {
-  if (dbInstance) return dbInstance;
-
-  ensureDir(DATA_DIR, 0o700);
-  ensureDir(dirname(LEDGER_PATH), 0o700);
-
-  const db = new Database(LEDGER_PATH);
+/** Open a ledger at `path`, set PRAGMAs, run forward migrations + the startup
+ * sweep, and tighten perms. Pure of the process-wide singleton — used by
+ * openLedger() and by the test seam below. */
+function openAndMigrate(path: string): DB {
+  const db = new Database(path);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.pragma("synchronous = NORMAL");
 
-  tightenFilePerms(LEDGER_PATH);
+  tightenFilePerms(path);
 
   runMigrations(db);
   reconcileStrandedRunning(db);
 
   // After migrations open the WAL files, re-tighten perms in case they were
   // newly created by the first transaction.
-  tightenFilePerms(LEDGER_PATH);
+  tightenFilePerms(path);
 
-  dbInstance = db;
   return db;
+}
+
+export function openLedger(): DB {
+  if (dbInstance) return dbInstance;
+
+  ensureDir(DATA_DIR, 0o700);
+  ensureDir(dirname(LEDGER_PATH), 0o700);
+
+  dbInstance = openAndMigrate(LEDGER_PATH);
+  return dbInstance;
 }
 
 export function closeLedger(): void {
@@ -292,4 +299,19 @@ export function closeLedger(): void {
     dbInstance.close();
     dbInstance = undefined;
   }
+}
+
+/** Test-only: open + migrate a ledger at an ARBITRARY path without touching the
+ * process-wide singleton or the real ledger. Lets migration tests run against a
+ * throwaway temp ledger so they can never corrupt the user's real one. Caller
+ * must close the returned handle. */
+export function __openLedgerAt(path: string): DB {
+  return openAndMigrate(path);
+}
+
+/** Test-only: install (or clear with `undefined`) the singleton so the rest of
+ * the engine (matcher cache, stores) reads `db`. Used to point matchToDestination
+ * at a migrated temp ledger for end-to-end backfill tests. */
+export function __setLedgerInstance(db: DB | undefined): void {
+  dbInstance = db;
 }

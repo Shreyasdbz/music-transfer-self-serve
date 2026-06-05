@@ -427,4 +427,26 @@ const liveSource: CanonicalTrack = { isrc: "USUG10000001", title: "Real Song", p
   assert(r1.destination?.id === r2.destination?.id, "tie-break: stable across runs");
 }
 
+// ── Bidirectional cache round-trip through the REAL persist/cacheHit pair ──
+// A spotify→apple match persists BOTH provider refs; the symmetric apple→spotify
+// then hits the cache and returns the original spotify id — without calling the
+// spotify destination's search (which throws). This proves persist() round-trips
+// into a reverse-direction cache hit (v1's bidirectional caching).
+{
+  const isrc = "USRT12604763";
+  const spSource: CanonicalTrack = { isrc, title: "Round Trip", primaryArtist: "RT Artist", artists: ["RT Artist"], album: "RT Album", durationMs: 205_000, explicit: true, source: "spotify", sourceId: "rt-spotify-id" };
+  const appleDest = fakeDest("apple", { searchByIsrc: async () => [appleCand("rt-apple-id", { isrc })] });
+  const fwd = await matchToDestination(spSource, appleDest, { useCache: false });
+  assert(fwd.tier === "isrc" && fwd.destination?.id === "rt-apple-id", `round-trip: forward spotify→apple persists (got ${fwd.destination?.id})`);
+
+  const apSource: CanonicalTrack = { isrc, title: "Round Trip", primaryArtist: "RT Artist", artists: ["RT Artist"], album: "RT Album", durationMs: 205_000, explicit: true, source: "apple", sourceId: "rt-apple-library-id" };
+  const spotifyDestThrows = fakeDest("spotify", {
+    searchByIsrc: async () => { throw new Error("round_trip_should_not_search"); },
+    searchByTerm: async () => { throw new Error("round_trip_should_not_search"); },
+  });
+  const rev = await matchToDestination(apSource, spotifyDestThrows); // cache allowed
+  assert(rev.fromCache, "round-trip: reverse apple→spotify hits the cache (no live search)");
+  assert(rev.destination?.id === "rt-spotify-id", `round-trip: reverse returns the original spotify id (got ${rev.destination?.id})`);
+}
+
 process.exit(process.exitCode ?? 0);
