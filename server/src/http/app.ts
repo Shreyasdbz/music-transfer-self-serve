@@ -87,6 +87,7 @@ export function buildApp(csrfToken: string): Hono {
         likedKind: p.capabilities.likedKind,
         supportsIsrc: p.capabilities.supportsIsrc,
         likedReadable: p.capabilities.likedReadable,
+        available: p.available ?? true,
       })),
     }),
   );

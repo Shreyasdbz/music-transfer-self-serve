@@ -1,7 +1,7 @@
 import { For, Show, type JSX } from "solid-js";
-import { AppIcon, Button, Card, ThemeToggle } from "../components/index.js";
+import { AppIcon, Button, Card, StatusPill, ThemeToggle } from "../components/index.js";
 import { authStatus, connectApple, connectSpotify, gate, preflight, providers, runPreflight } from "../store.js";
-import { brandColor } from "./brand.js";
+import { brandColor, brandLogo } from "./brand.js";
 
 export function Header(): JSX.Element {
   return (
@@ -39,21 +39,26 @@ export function Setup(): JSX.Element {
         <div class="stack">
           <For each={providers()}>
             {(p) => (
-              <div class="spread">
-                <AppIcon color={brandColor(p.id)} label={p.displayName} />
+              <div class="spread" classList={{ "provider-coming-soon": p.available === false }}>
+                <AppIcon color={brandColor(p.id)} src={brandLogo(p.id)} label={p.displayName} />
                 <span class="grow t-note">{p.displayName}</span>
-                <span class="t-subtle" style={{ color: "var(--color-text-muted)" }}>
-                  {connected(p.id) ? "Connected" : "Not connected"}
-                </span>
-                <Show when={p.id === "spotify"}>
-                  <Button size="sm" onClick={() => void connectSpotify()}>
-                    {connected("spotify") ? "Reconnect" : "Connect"}
-                  </Button>
-                </Show>
-                <Show when={p.id === "apple"}>
-                  <Button size="sm" onClick={() => connectApple()}>
-                    {connected("apple") ? "Reconnect" : "Connect"}
-                  </Button>
+                <Show
+                  when={p.available !== false}
+                  fallback={<StatusPill tone="general">Coming soon</StatusPill>}
+                >
+                  <span class="t-subtle" style={{ color: "var(--color-text-muted)" }}>
+                    {connected(p.id) ? "Connected" : "Not connected"}
+                  </span>
+                  <Show when={p.id === "spotify"}>
+                    <Button size="sm" onClick={() => void connectSpotify()}>
+                      {connected("spotify") ? "Reconnect" : "Connect"}
+                    </Button>
+                  </Show>
+                  <Show when={p.id === "apple"}>
+                    <Button size="sm" onClick={() => connectApple()}>
+                      {connected("apple") ? "Reconnect" : "Connect"}
+                    </Button>
+                  </Show>
                 </Show>
               </div>
             )}

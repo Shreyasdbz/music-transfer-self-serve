@@ -63,9 +63,16 @@ const STATE_TEXT: Record<"on" | "off" | "error", string> = {
 };
 
 // ── App / provider icon (brand color is data, not a theme token) ──────
-export function AppIcon(props: { color: string; label: string; children?: JSX.Element }): JSX.Element {
+// With `src`, renders the brand logo image (the PNGs are already full circular
+// marks, so no color chip behind them). Without, falls back to a color chip.
+export function AppIcon(props: { color: string; label: string; src?: string | undefined; children?: JSX.Element }): JSX.Element {
+  // Decorative: every call site renders the provider name as adjacent text, so
+  // the logo carries no extra info for SR users (mirrors StatusDot `decorative`).
+  if (props.src) {
+    return <img class="app-icon app-icon-img" src={props.src} alt="" aria-hidden="true" />;
+  }
   return (
-    <span class="app-icon" style={{ background: props.color }} role="img" aria-label={props.label}>
+    <span class="app-icon" style={{ background: props.color }} aria-hidden="true">
       {props.children}
     </span>
   );

@@ -24,9 +24,13 @@ export function Operation(): JSX.Element {
   const [createName, setCreateName] = createSignal("");
   const [disambig, setDisambig] = createSignal<Disambig | undefined>();
 
+  // Only providers that are actually functional can be a transfer source/dest
+  // (a "Coming soon" placeholder like YouTube is excluded everywhere here).
+  const usableProviders = createMemo(() => providers().filter((p) => p.available !== false));
+
   // Default provider selections once providers load.
   createEffect(() => {
-    const list = providers();
+    const list = usableProviders();
     if (list.length && !srcProvider()) setSrcProvider(list[0]!.id);
     if (list.length > 1 && !dstProvider()) setDstProvider(list.find((p) => p.id !== list[0]!.id)!.id);
   });
@@ -39,13 +43,13 @@ export function Operation(): JSX.Element {
     setSrcTarget(targetKey(pf.target));
     // Keep destination distinct from the new source.
     if (dstProvider() === pf.provider) {
-      const other = providers().find((p) => p.id !== pf.provider);
+      const other = usableProviders().find((p) => p.id !== pf.provider);
       if (other) setDstProvider(other.id);
     }
   });
 
   const providerOptions = (exclude?: string) =>
-    providers()
+    usableProviders()
       .filter((p) => p.id !== exclude)
       .map((p) => ({ value: p.id, label: p.displayName }));
 

@@ -67,6 +67,11 @@ export interface MusicProvider {
   readonly id: ProviderId;
   readonly displayName: string;
   readonly capabilities: ProviderCapabilities;
+  /** False for a placeholder provider that appears in the UI but is not yet
+   * functional (deferred to a future iteration — e.g. YouTube Music). Omitted /
+   * undefined = available. A not-available provider must never be selected as a
+   * transfer source or destination. */
+  readonly available?: boolean;
 
   // ── read (source side) ──────────────────────────────────────────────
   /** Read the full source set for a target (playlist or liked/favorites),

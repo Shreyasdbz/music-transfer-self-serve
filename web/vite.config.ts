@@ -8,6 +8,9 @@ export default defineConfig({
   plugins: [solid()],
   server: {
     port: 5173,
+    // Allow importing brand assets from the repo-root `assets/` dir (one level
+    // above the web workspace) in dev. Build (rollup) bundles them regardless.
+    fs: { allow: [".."] },
     proxy: {
       // changeOrigin rewrites the Host header to the target; `headers.Origin`
       // forces the Origin to the server's expected value so the §11.0

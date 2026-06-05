@@ -143,6 +143,17 @@
   flex: none;
   color: var(--color-status-text);
 }
+/* Brand-logo variant: the PNG is the full mark, so show it as-is (no chip). */
+.app-icon-img {
+  object-fit: contain;
+  background: none;
+  border-radius: 0;
+}
+/* A placeholder (not-yet-available) provider reads as muted. */
+.provider-coming-soon .app-icon-img,
+.app-icon-img[data-dim="true"] {
+  opacity: 0.55;
+}
 
 /* ── Dropdown (native select, tokenized) ─────────────────────────────── */
 .dropdown {

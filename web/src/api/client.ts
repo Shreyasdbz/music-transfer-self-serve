@@ -19,6 +19,9 @@ export interface Provider {
   likedKind: "liked" | "favorites" | "none";
   supportsIsrc: boolean;
   likedReadable: boolean;
+  /** False for a placeholder provider shown in the UI but not yet functional
+   * (e.g. YouTube Music). Omitted = available. */
+  available?: boolean;
 }
 export interface GateState {
   open: boolean;

@@ -1,5 +1,5 @@
 import { For, Show, type JSX } from "solid-js";
-import { AppIcon, Button, Collapsible } from "../components/index.js";
+import { AppIcon, Button, Collapsible, StatusPill } from "../components/index.js";
 import {
   catalog,
   catalogRefresh,
@@ -8,7 +8,7 @@ import {
   startCatalogRefresh,
   transferFrom,
 } from "../store.js";
-import { brandColor } from "./brand.js";
+import { brandColor, brandLogo } from "./brand.js";
 import type { CatalogRow, TargetInput } from "../api/client.js";
 
 function targetOf(row: CatalogRow): TargetInput {
@@ -51,27 +51,40 @@ export function Catalog(): JSX.Element {
             <Collapsible
               defaultOpen
               title={
-                <span class="spread" style={{ width: "100%" }}>
-                  <AppIcon color={brandColor(p.id)} label={p.displayName} />
+                <span class="spread" style={{ width: "100%" }} classList={{ "provider-coming-soon": p.available === false }}>
+                  <AppIcon color={brandColor(p.id)} src={brandLogo(p.id)} label={p.displayName} />
                   <span class="grow">{p.displayName}</span>
-                  <Show when={lastFetched(p.id)}>
-                    <span class="t-subtle" style={{ color: "var(--color-text-muted)" }}>
-                      Updated {new Date(lastFetched(p.id)!).toLocaleString()}
-                    </span>
-                  </Show>
-                  <Button
-                    size="sm"
-                    disabled={!gate().open || catalogRefresh.running}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void startCatalogRefresh();
-                    }}
+                  <Show
+                    when={p.available !== false}
+                    fallback={<StatusPill tone="general">Coming soon</StatusPill>}
                   >
-                    Refresh
-                  </Button>
+                    <Show when={lastFetched(p.id)}>
+                      <span class="t-subtle" style={{ color: "var(--color-text-muted)" }}>
+                        Updated {new Date(lastFetched(p.id)!).toLocaleString()}
+                      </span>
+                    </Show>
+                    <Button
+                      size="sm"
+                      disabled={!gate().open || catalogRefresh.running}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void startCatalogRefresh();
+                      }}
+                    >
+                      Refresh
+                    </Button>
+                  </Show>
                 </span>
               }
             >
+              <Show
+                when={p.available !== false}
+                fallback={
+                  <p class="t-subtle" style={{ color: "var(--color-text-muted)" }}>
+                    YouTube Music support is coming in a future update.
+                  </p>
+                }
+              >
               <Show
                 when={rowsFor(p.id).length > 0}
                 fallback={<p class="t-subtle" style={{ color: "var(--color-text-muted)" }}>No catalog yet — Refresh to load.</p>}
@@ -96,6 +109,7 @@ export function Catalog(): JSX.Element {
                     )}
                   </For>
                 </div>
+              </Show>
               </Show>
             </Collapsible>
           )}
