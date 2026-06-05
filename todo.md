@@ -198,10 +198,31 @@ build` produces a shell; blueprint §15 contains A1–A3.
 
 **Goal:** replace the ~30 two-platform branches with `MusicProvider` + registry.
 
-- [ ] `providers/types.ts` — `ProviderId`, `ProviderCapabilities` (`supportsIsrc`,
-      `supportsLikedRemoval: false`, `likedKind`, `playlistAppendOnly`, `writeBatchAdd/Like`,
-      `searchLimit`, `likedReadable`), `UserCtx`, `MusicProvider` interface.
-- [ ] `providers/registry.ts` — `register/getProvider/listProviders`.
+**Design decisions (resolved 2026-06-05 from reading `runner.ts`/`deps.ts`/`matcher.ts`):**
+- **`deps.match` gains a 3rd arg `destination: ProviderId`.** Today `deps.match(source, useCache)`
+  infers "destination = the opposite platform" — breaks for a 3rd provider. The runner has
+  `spec.destination` in scope, so pass it (runner.ts lines ~123 and ~264). This keeps
+  `runner.test.ts` green with **zero test edits**: old fakes `(source, useCache) => …` ignore an
+  extra positional arg, and TS lets a 2-param fn satisfy a 3-param type. So "runner untouched"
+  becomes "runner edits limited to: batch-size via capabilities + threading `destination` into
+  `match`; all other logic byte-stable."
+- **Matcher test seam changes.** `matchToDestination(source, destProvider)` calls
+  `destProvider.searchByIsrc/searchByTerm`, so the old `__setMatcherClients` (fake client fns)
+  seam is replaced by **registering fake providers**. `match.test.ts` must be migrated to the
+  provider seam (it is NOT in the untouched set).
+- **Cache stays on the v1 schema in V1.** `matchToDestination`'s cache read/write maps
+  `destProvider.id → {spotify_id|apple_catalog_id}` columns (no-op for unknown providers). The
+  generalized `track_provider_ids` table lands in **V2**, not here — keeps V1 schema-compatible.
+- **Providers absorb platform quirks**: the Apple favorites→empty-D rule, library-vs-catalog
+  destId, empty-playlist 40403, and the `toCanonical` adapters all move *into* the provider
+  modules; `deps.ts` becomes thin registry lookups.
+
+- [x] `providers/types.ts` — `ProviderId`, `UserCtx`+`OWNER`, `ProviderCapabilities`
+      (`supportsIsrc`, `supportsLikedRemoval: false`, `likedKind`, `likedReadable`,
+      `canCreatePlaylist`, `playlistAppendOnly`, `writeBatchAdd/Like`, `searchLimit`), `DestTrack`,
+      `MusicProvider` (operation+match surface; auth/catalog/preflight slices added in later phases).
+- [x] `providers/registry.ts` — `registerProvider/getProvider/hasProvider/listProviders`
+      (+ `__clearRegistry` test hook); tested in `providers/registry.test.ts` (11 asserts).
 - [ ] `providers/spotify/provider.ts` + `providers/apple/provider.ts` — wrap existing
       `clients/*` + `auth/*`; move the `toCanonical` adapters in here (return `CanonicalTrack[]`).
 - [ ] `match/identity.ts` — `CanonicalTrack.source: ProviderId` (was union).
