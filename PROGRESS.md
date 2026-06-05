@@ -1319,3 +1319,39 @@ A2 multi-user-ready seam, A3 session cookie) gate the build.
   confirmed intact post-test (schema_version=1, 1610 tracks, integrity ok) — the real migration runs
   when the server is next started. `tsc` + eslint clean, **373 PASS / 0 FAIL**. §15 amendment added
   (schema extended, forward-only, zero-loss). **Next**: Phase V3 — Hono server migration.
+
+### 2026-06-05 — Phase V3: Hono server migration (branch `v2/hono-server`)
+
+- **Start**: replace the bespoke `node:http` dispatcher with Hono on `@hono/node-server`, keeping
+  every route path / status / JSON shape / SSE framing wire-compatible so the kept vanilla UI stays
+  a regression oracle.
+- **Decisions**:
+  - `http/app.ts` `buildApp()`: §11.0 security middleware (Host on all routes; Origin+CSRF on POST),
+    `bodyLimit`→413, a JSON-hardening middleware, health fixtures, route modules, static fallback,
+    JSON 404. `http/respond.ts` (err/autoCloseHtml/readJson), `http/sse.ts` (a streamSSE wrapper with
+    a serialized writer + terminal `done()` + abort cleanup). All four route modules ported to Hono
+    Context (`c.json`/`c.req.param`/`streamSSE`); `gateClosed(res)`→`gateBlocked(c)`. `startHttpServer()`
+    keeps the `ServerHandle` shape; `close()` now `closeAllConnections()` so open SSE streams don't
+    hang shutdown. New deps (locked V3 decision): `hono`, `@hono/node-server`.
+  - Deferred: the auth/catalog "loop the registry" shape change → V5 (would break the old-UI oracle).
+  - SSE note: framing is **EventSource-equivalent**, NOT byte-identical — Hono's writeSSE emits
+    `event`/`data`/`id` field order vs v1's `id`/`event`/`data`. Per the WHATWG spec, intra-event
+    field order is parser-irrelevant, so Last-Event-ID replay + the UI behave identically.
+- **Verification (unit + live)**: `tsc` + eslint clean. **Live smoke test** against the running Hono
+  server: every endpoint returned the v1 status/shape; SSE framing + Last-Event-ID replay confirmed
+  (full 56 frames → terminal; `Last-Event-ID:3` → only seq>3); static + CSRF injection; 403/404
+  shapes. This also live-migrated the real 1610-track ledger to v2 (confirming V2's migration on real
+  data).
+- **Validation**: 5-persona adversarial workflow + synthesis (`wf_5a86d4c0-379`). Verdict:
+  behavior-preserving + secure, NO blockers, route/SSE parity + §11.0 security confirmed. 5 findings.
+  The one MEDIUM was real: Hono's `c.json` dropped v1 `sendJson`'s `Cache-Control: no-store`,
+  `X-Content-Type-Options: nosniff`, and `; charset=utf-8` on EVERY JSON response (`nosniff` is a
+  §11.0 header). **Fixed** with the JSON-hardening middleware. The other findings (SSE field-order
+  wording, no CI coverage of route shapes/headers/SSE, stricter bodyLimit) were addressed by
+  **re-scoping the SSE claim** and **adding automated coverage**: `server.test.ts` now isolates the
+  real ledger (snapshot/restore) and asserts JSON headers (no-store/nosniff/charset), route shapes
+  (auth-status/gate/catalog/operations/404), 413 on oversized POST, and the catalog-SSE idle frame.
+- **Result**: **AC met.** `tsc` + eslint clean, **386 PASS / 0 FAIL** (373 + 13 new). Real ledger
+  verified clean post-suite (schema_version=2, 1610 tracks, 3220 backfilled provider refs, integrity
+  ok, **zero test pollution**). **Next**: Phase V4 — design system (Figma tokens + Solid primitives +
+  theming + a11y).

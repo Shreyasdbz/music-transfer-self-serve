@@ -297,22 +297,32 @@ strengthened (user attribution).
 
 ### Phase V3 — `v2/hono-server`
 
-**Goal:** swap `node:http` → Hono, keeping routes byte-identical (old UI = regression oracle).
+**Goal:** swap `node:http` → Hono, keeping routes wire-compatible (old UI = regression oracle).
 
-- [ ] `app.ts` — build the Hono app, mount middleware + route modules.
-- [ ] `http/middleware/{host,origin,csrf,session,error}.ts` — port Host/Origin/CSRF defenses verbatim
-      (CSRF `<meta>` per-start unchanged; session middleware resolves `UserCtx`, default `__owner__`).
-- [ ] `http/routes.{auth,preflight,catalog,operations}.ts` — same paths + response shapes as §11.2.
-      Auth/catalog routes loop the provider registry instead of hardcoding spotify/apple.
-- [ ] `http/sse.ts` — shared SSE helper (Hono streaming) with `Last-Event-ID` replay.
-- [ ] Static serving of `web/dist` (prod) via Hono; CSRF `<meta>` injection preserved.
-- [ ] Port `server.test.ts` + `routes_*.test.ts` to drive the Hono app.
+- [x] `http/app.ts` `buildApp()` — Hono app: security middleware (Host all / Origin+CSRF POST) +
+      `bodyLimit`→413 + JSON-hardening + health fixtures + route modules + static fallback + 404.
+- [x] Security middleware ported verbatim (Host/Origin/CSRF; per-start CSRF `<meta>` injection).
+      **Session/`UserCtx` middleware deferred to V6** (network/session phase, not needed single-owner).
+- [x] `routes_{auth,preflight,catalog,operations}.ts` — same paths + shapes as §11.2, ported to Hono
+      Context. **Registry-loop generalization of auth/catalog shapes deferred to V5** (new UI) — would
+      break the old-UI oracle. `parseUrl`/`looksLikeBareId` unchanged (unit test intact).
+- [x] `http/sse.ts` — shared streamSSE wrapper (serialized writer + terminal `done()` + abort cleanup)
+      with `Last-Event-ID` replay; backs all three SSE streams.
+- [x] Static via Hono (`serveStaticFile` → `Response`); CSRF `<meta>` injection preserved. (Serves
+      `server/web` in V3; switches to `web/dist` in V5/V6.)
+- [x] `server.test.ts` ported + **hardened** (ledger isolation + header/shape/413/SSE-idle coverage);
+      `routes_operations.test.ts` unchanged (pure helpers).
 
-**AC:** every §11.2 endpoint returns the same status/shape; ported route tests green (403 on bad
-Host/Origin/CSRF; 412 gate; 409 running; 422 disambiguation); SSE reconnect with `Last-Event-ID:N`
-replays seq>N then continues live; old `web/app.js` still drives it.
+**AC:** ✅ every §11.2 endpoint returns the v1 status/shape (verified live + in CI); 403 on bad
+Host/Origin/CSRF, 404/413 shapes, SSE `Last-Event-ID:N` replays seq>N then closes on terminal; old
+vanilla UI still drives it. **tsc + eslint clean · 386 PASS / 0 FAIL.**
 
-**Invariants:** secrets/privacy (redaction + SSE payload redaction intact); auditability (replay).
+**Validation:** 5-persona workflow (`wf_5a86d4c0-379`) → behavior-preserving + secure, no blockers.
+5 findings: 1 MEDIUM (JSON responses lost `no-store`/`nosniff`/`charset` vs v1 `sendJson`) — **fixed**
+(JSON-hardening middleware); LOW (SSE field-order — re-scoped claim to EventSource-equivalent; no CI
+coverage — **added** route/header/413/SSE tests + ledger isolation; stricter bodyLimit — kept).
+
+**Invariants:** secrets/privacy (`nosniff` restored; redaction intact); auditability (SSE replay).
 
 ---
 

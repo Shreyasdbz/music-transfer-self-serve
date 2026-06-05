@@ -18,6 +18,24 @@ const BODY_BYTE_LIMIT = 1 << 20; // 1 MiB
 export function buildApp(csrfToken: string): Hono {
   const app = new Hono();
 
+  // 0) Harden every JSON response to match v1 `sendJson`: Hono's c.json sets a
+  // bare `application/json` Content-Type and nothing else, dropping the v1
+  // `; charset=utf-8`, `Cache-Control: no-store`, and the §11.0
+  // `X-Content-Type-Options: nosniff` header. Re-add them here (outermost, so it
+  // also covers the security-middleware error responses below). Non-JSON paths
+  // (static, the OAuth auto-close HTML, SSE) set their own headers and are skipped.
+  app.use("*", async (c, next) => {
+    await next();
+    const ct = c.res.headers.get("content-type");
+    if (ct && ct.startsWith("application/json")) {
+      const headers = new Headers(c.res.headers);
+      headers.set("Content-Type", "application/json; charset=utf-8");
+      headers.set("Cache-Control", "no-store");
+      headers.set("X-Content-Type-Options", "nosniff");
+      c.res = new Response(c.res.body, { status: c.res.status, headers });
+    }
+  });
+
   // 1) Host check on EVERY route (DNS-rebinding defense), then Origin + CSRF on
   // every state-changing POST. GET routes aren't Origin-gated (cross-origin
   // reads are browser-blocked; the Spotify OAuth callback is a GET top-level

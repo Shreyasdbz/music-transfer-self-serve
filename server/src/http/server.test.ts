@@ -8,7 +8,10 @@
 // AC #4 (startup reconciliation sweep) is covered by src/ledger/db.test.ts.
 
 import { connect } from "node:net";
+import { existsSync, copyFileSync, unlinkSync } from "node:fs";
 import { startHttpServer } from "./server.js";
+import { LEDGER_PATH } from "../config.js";
+import { closeLedger } from "../ledger/db.js";
 import { stopStateSweeper } from "../auth/spotify.js";
 import { stopNonceSweeper } from "../auth/apple.js";
 
@@ -47,9 +50,30 @@ function assert(cond: unknown, msg: string): void {
   }
 }
 
+// Isolate the real ledger: startHttpServer() opens it (and migration #2 would
+// migrate it). Snapshot + restore on exit so the suite never mutates user state.
+const SNAP = LEDGER_PATH + ".server-test-snap";
+const _had = existsSync(LEDGER_PATH);
+if (_had) copyFileSync(LEDGER_PATH, SNAP);
+function restoreLedger(): void {
+  try { closeLedger(); } catch { /* ignore */ }
+  for (const side of [`${LEDGER_PATH}-wal`, `${LEDGER_PATH}-shm`]) {
+    if (existsSync(side)) { try { unlinkSync(side); } catch { /* ignore */ } }
+  }
+  if (_had) {
+    copyFileSync(SNAP, LEDGER_PATH);
+    try { unlinkSync(SNAP); } catch { /* ignore */ }
+  } else if (existsSync(LEDGER_PATH)) {
+    try { unlinkSync(LEDGER_PATH); } catch { /* ignore */ }
+  }
+}
+process.on("exit", restoreLedger);
+process.on("SIGINT", () => { restoreLedger(); process.exit(130); });
+
 // startHttpServer() now builds the Hono app and registers every route module
 // (incl. auth — the Spotify callback exercised by the XSS test below).
 const handle = await startHttpServer();
+const B = "http://127.0.0.1:8888";
 
 try {
   // ── AC #2 — Host header ────────────────────────────────────────────────
@@ -115,6 +139,56 @@ try {
     (xssAttempt.headers.get("content-security-policy") ?? "").includes("default-src 'none'"),
     `XSS-fix: CSP default-src 'none' present (got "${xssAttempt.headers.get("content-security-policy")}")`,
   );
+
+  // ── V3 Hono migration: JSON response headers parity with v1 sendJson ─────
+  const health = await fetch(`${B}/api/health`);
+  assert(health.headers.get("cache-control") === "no-store", `JSON headers: health Cache-Control=no-store (got ${health.headers.get("cache-control")})`);
+  assert(health.headers.get("x-content-type-options") === "nosniff", "JSON headers: health X-Content-Type-Options=nosniff");
+  assert((health.headers.get("content-type") ?? "").includes("application/json; charset=utf-8"), `JSON headers: health charset=utf-8 (got ${health.headers.get("content-type")})`);
+
+  // ── JSON route shapes (lock the contract the migration must preserve) ─────
+  const notFound = await fetch(`${B}/api/nope`);
+  assert(notFound.status === 404, `404: unknown api → 404 (got ${notFound.status})`);
+  assert(((await notFound.json()) as { error?: string }).error === "not_found", "404: body {error:'not_found'}");
+  const nf2 = await fetch(`${B}/api/nope`);
+  assert(nf2.headers.get("x-content-type-options") === "nosniff", "JSON headers: error responses also hardened (nosniff)");
+
+  const statusBody = (await (await fetch(`${B}/api/auth/status`)).json()) as Record<string, unknown>;
+  assert("spotify" in statusBody && "apple" in statusBody, "shape: /api/auth/status {spotify, apple}");
+  const gateBody = (await (await fetch(`${B}/api/gate`)).json()) as Record<string, unknown>;
+  assert("open" in gateBody && "reason" in gateBody, "shape: /api/gate {open, reason}");
+  const catBody = (await (await fetch(`${B}/api/catalog`)).json()) as Record<string, unknown>;
+  assert(Array.isArray(catBody["rows"]) && "last_fetched" in catBody && "refreshing" in catBody, "shape: /api/catalog {rows, last_fetched, refreshing}");
+  const opsBody = (await (await fetch(`${B}/api/operations`)).json()) as Record<string, unknown>;
+  assert(Array.isArray(opsBody["operations"]), "shape: /api/operations {operations:[...]}");
+
+  // ── bodyLimit → 413 on an oversized POST ─────────────────────────────────
+  const big = "x".repeat((1 << 20) + 1024); // > 1 MiB
+  const tooBig = await fetch(`${B}/api/operations`, {
+    method: "POST",
+    headers: { Origin: B, "X-CSRF-Token": handle.csrfToken, "Content-Type": "application/json" },
+    body: JSON.stringify({ pad: big }),
+  });
+  assert(tooBig.status === 413, `413: oversized POST → 413 (got ${tooBig.status})`);
+
+  // ── Catalog SSE: emits an `idle` frame with NO `id:` line (transient) ─────
+  {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 1500);
+    let text = "";
+    try {
+      const resp = await fetch(`${B}/api/catalog/events`, { signal: ac.signal });
+      const reader = resp.body!.getReader();
+      const { value } = await reader.read();
+      text = new TextDecoder().decode(value ?? new Uint8Array());
+      ac.abort();
+    } catch {
+      /* aborted after reading the first frame */
+    }
+    clearTimeout(t);
+    assert(text.includes("event: idle"), `catalog SSE: first frame is event:idle (got ${JSON.stringify(text.slice(0, 80))})`);
+    assert(!/^id:/m.test(text), "catalog SSE: no id: line (transient stream, no replay)");
+  }
 } finally {
   stopStateSweeper();
   stopNonceSweeper();
